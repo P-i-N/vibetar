@@ -1,7 +1,7 @@
 # Plucking hand and modelled body — design
 
 Date: 2026-11-10
-Status: awaiting review
+Status: implemented (deviations are listed in the implementation report)
 
 ## Goal
 

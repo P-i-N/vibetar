@@ -131,3 +131,31 @@ export function aLevel(x, start, n, fs = FS) {
   for (let i = 1; i < n / 2; i++) { const a = aWeight((i * fs) / n) * m[i]; s += a * a; }
   return db((Math.sqrt(s) / n) * 4);
 }
+
+// ---- a whole song through the instrument (no reverb, delay or master) -------------
+import * as Song from '../js/song.js';
+import { makeBodyIR } from '../js/ir.js';
+import { LEVELS, MIX_H, MODEL_TRIM } from '../js/audio.js';
+
+// the instrument bus signal (left microphone) of a song, on the modelled or the classic body
+export function renderMix(song, modelled) {
+  const inst = song.inst, body = modelled ? cachedBody(inst.preset) : null;
+  const e = new VibetarEngine(FS);
+  e.configure({ preset: inst.preset, open: song.tuning.map((m) => m + song.capo), tune: song.tuning, pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain, symp: inst.symp, fingerNoise: inst.fingerNoise, pick: inst.picking, bridge: body ? body.bridge : null });
+  const perf = Song.newPerformer(1);
+  const n = Song.totalSteps(song), stepDur = 60 / song.bpm / song.spb;
+  for (const ev of Song.songEvents(song, 0, n, 0.05, perf.rnd, perf)) e.post(ev);
+  const len = Math.floor(((n * stepDur + 3) * FS) / 128) * 128, ch = [0, 1, 2, 3].map(() => new Float32Array(len));
+  for (let i = 0; i < len; i += 128) e.render(ch.map((c) => c.subarray(i, i + 128)), 128, i);
+  const b = Math.max(0, Math.min(1, inst.body)), lv = LEVELS[inst.preset];
+  const mono = new Float32Array(len);
+  for (let i = 0; i < len; i++) mono[i] = ch[0][i] + ch[1][i] + ch[2][i] + MIX_H[inst.preset] * ch[3][i];
+  let wet;
+  if (body) {
+    wet = new Float64Array(len + body.irs[0].length);
+    for (let z = 0; z < 4; z++) { const y = convolve(ch[z], body.irs[2 * z]); for (let i = 0; i < wet.length; i++) wet[i] += y[i] * MODEL_TRIM[inst.preset]; }
+  } else wet = convolve(mono, makeBodyIR(FS, inst.preset).L);
+  const out = new Float64Array(len);
+  for (let i = 0; i < len; i++) out[i] = wet[i] * (0.35 + 0.65 * b) * lv + mono[i] * 0.55 * (1 - b) * lv;
+  return out;
+}

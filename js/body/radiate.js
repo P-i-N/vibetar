@@ -5,11 +5,15 @@
 // from the back. For a force on the bridge described by `drive` (how strongly
 // it excites each resonance):
 //   R_k(ω) = Σ_top φ_k h² e^(−jωr/c)/r + hole_k S e^(−jωr_h/c)/r_h + B(ω) V_back,k e^(−jωr_b/c)/r_b
-//   H(ω)   = −ω² ρ/(2π) Σ_k R_k(ω) drive_k / (ω_k²(1 + jη_k) − ω²)
+//   H(ω)   = −ω² ρ/(2π) U(ω) Σ_k R_k(ω) drive_k / (ω_k²(1 + jη_k) − ω²)
+// The sum over the top treats it as set in a wall, which holds once the body is
+// large against the wavelength. Below that the sound spreads all round the
+// instrument instead of only forwards and is half as strong: U(ω) goes from ½ to 1.
 
 import { AIR } from './instruments.js';
 
 export const F_STEP = 50, F_TOP = 5000; // grid on which the radiation factors are evaluated
+const unbaffled = (f, size) => { const x = ((2 * Math.PI * f) / AIR.c) * size; return 0.5 + (0.5 * x * x) / (1 + x * x); };
 
 // Returns, per microphone, the half spectrum { re, im } (nfft/2 + 1 bins) for
 // each of the drives (array of Float64Array(K)).
@@ -22,6 +26,7 @@ export function micTransfer(body, inst, drives, fs, nfft) {
   const vBack = new Float64Array(K);
   for (let k = 0; k < K; k++) { let v = 0; for (let i = 0; i < nodes; i++) v += body.shapeBack[k * nodes + i]; vBack[k] = v * h2; }
   const wk2 = Array.from(body.f, (f) => (2 * Math.PI * f) ** 2);
+  const size = inst.outline.lower / 2; // the body's radius, for the change from all-round to forward radiation
 
   return inst.mics.map((mic) => {
     const dist = (x, y, z) => Math.hypot(mic.x - x, mic.y - y, mic.z - z);
@@ -61,7 +66,7 @@ export function micTransfer(body, inst, drives, fs, nfft) {
           const dr = wk2[k] - w2, di = body.eta[k] * wk2[k], g = drive[k] / (dr * dr + di * di);
           sr += (rr * dr + ri * di) * g; si += (ri * dr - rr * di) * g;
         }
-        const scale = (-w2 * AIR.rho) / (2 * Math.PI), ph = (-w * r0) / AIR.c, c = Math.cos(ph), s = Math.sin(ph);
+        const scale = ((-w2 * AIR.rho) / (2 * Math.PI)) * unbaffled(f, size), ph = (-w * r0) / AIR.c, c = Math.cos(ph), s = Math.sin(ph);
         re[b] = scale * (sr * c - si * s); im[b] = scale * (sr * s + si * c);
       }
       return { re, im };

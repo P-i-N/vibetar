@@ -6,9 +6,11 @@ import { MODEL_VERSION } from './body/model.js';
 
 const WORKLET_URL = new URL('./worklet.js', import.meta.url).href;
 const irCache = new Map();
-const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7, bowed: 1.25 };
+export const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7, bowed: 1.25 };
 // how much of the strings' along-top motion the classic body lets through
-const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6, bowed: 0 };
+export const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6, bowed: 0 };
+// level of the modelled body against the classic one, so switching does not change the loudness
+export const MODEL_TRIM = { steel: 1.0, nylon: 2.0, twelve: 0.71 };
 const MODELLED = new Set(['steel', 'nylon', 'twelve']);
 export const hasModel = (inst) => !!inst.bodyModel && MODELLED.has(inst.preset);
 
@@ -192,7 +194,7 @@ class Graph {
   showModel(on, now) {
     this.showing = on ? 'modelled' : 'classic';
     const t = now ? this.ctx.currentTime : 0;
-    for (const [p, v] of [[this.modelMix.gain, on ? 1 : 0], [this.classicMix.gain, on ? 0 : 1]]) {
+    for (const [p, v] of [[this.modelMix.gain, on ? MODEL_TRIM[this.loaded] || 1 : 0], [this.classicMix.gain, on ? 0 : 1]]) {
       if (now) { p.cancelScheduledValues(t); p.setTargetAtTime(v, t, 0.07); } else p.setValueAtTime(v, 0);
     }
   }

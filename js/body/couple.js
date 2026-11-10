@@ -114,7 +114,9 @@ export function coupleBody(inst, { h = 0.008, nTop = 150, nBack = 80, nAir = 30,
     const w = 2 * Math.PI * f;
     const etaHole = 0.01 + (w * inst.hole.r ** 2) / (2 * AIR.c * neck);
     const etaRad = (AIR.rho * w * vol * vol) / (4 * Math.PI * AIR.c);
-    body.eta[k] = (eTop + eBack) * inst.eta.wood + eAir * inst.eta.air + eHole * etaHole + etaRad;
+    // wood loses less per cycle higher up (the low resonances also work the glue lines, linings and finish)
+    const etaWood = inst.eta.woodHigh + (inst.eta.wood - inst.eta.woodHigh) / (1 + (f / 600) ** 2);
+    body.eta[k] = (eTop + eBack) * etaWood + eAir * inst.eta.air + eHole * etaHole + etaRad;
   });
   for (let s = 0; s < 6; s++) body.z[s] = 2 * inst.strings.scale * 440 * Math.pow(2, (OPEN_MIDI[s] - 69) / 12) * inst.strings.mu[s];
   body.parts = { nTop, nBack, nAir, topF: top.f, backF: back.f, airF: air.f };

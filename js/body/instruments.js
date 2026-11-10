@@ -70,7 +70,7 @@ export const INSTRUMENTS = {
     saddle: { y: 0.287, xs: SADDLE_X, height: 0.012 },
     strings: { mu: [6.8e-3, 3.9e-3, 2.2e-3, 1.25e-3, 0.62e-3, 0.40e-3], scale: 0.648 },
     mics: [{ x: -0.02, y: 0.06, z: 0.40 }, { x: 0.07, y: 0.36, z: 0.42 }],
-    eta: { wood: 0.022, air: 0.025 },
+    eta: { wood: 0.022, woodHigh: 0.013, air: 0.025 }, // loss factors: wood at the low resonances / well above them, air
   },
   // classical, fan-braced cedar top
   nylon: {
@@ -83,7 +83,7 @@ export const INSTRUMENTS = {
     saddle: { y: 0.325, xs: SADDLE_X.map((x) => x * 1.08), height: 0.010 },
     strings: { mu: [5.4e-3, 3.4e-3, 1.9e-3, 0.95e-3, 0.55e-3, 0.38e-3], scale: 0.650 },
     mics: [{ x: -0.02, y: 0.05, z: 0.38 }, { x: 0.06, y: 0.35, z: 0.40 }],
-    eta: { wood: 0.022, air: 0.025 },
+    eta: { wood: 0.022, woodHigh: 0.013, air: 0.025 }, // loss factors: wood at the low resonances / well above them, air
   },
   // jumbo 12-string, heavier X-bracing
   twelve: {
@@ -96,7 +96,7 @@ export const INSTRUMENTS = {
     saddle: { y: 0.290, xs: SADDLE_X, height: 0.012 },
     strings: { mu: [6.8e-3, 3.9e-3, 2.2e-3, 1.25e-3, 0.62e-3, 0.40e-3], scale: 0.648 },
     mics: [{ x: -0.02, y: 0.06, z: 0.40 }, { x: 0.07, y: 0.36, z: 0.42 }],
-    eta: { wood: 0.022, air: 0.025 },
+    eta: { wood: 0.022, woodHigh: 0.013, air: 0.025 }, // loss factors: wood at the low resonances / well above them, air
   },
 };
 
