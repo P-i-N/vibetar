@@ -187,3 +187,8 @@ test('string coupling survives the link; old links get the instrument default', 
   const old = S.unpackSong({ v: 1, t: 'old', b: 100, g: [4, 4, 1], u: [40, 45, 50, 55, 59, 64], c: 0, n: 'A3', i: ['nylon', 0.2, 0.5, 0, 0, 0.9, 0.3, 18, 0.35, 1], x: [1, 0.26, 2.2, 0.5, 0, '8d', 0.35, 0.22, 0.8] });
   assert.equal(old.inst.coupling, S.INSTRUMENTS.nylon.coupling);
 });
+
+test('new songs and every instrument humanize at 50 %', () => {
+  assert.equal(S.newSong().inst.human, 0.5);
+  for (const inst of Object.values(S.INSTRUMENTS)) assert.equal(inst.human, 0.5);
+});
