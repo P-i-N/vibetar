@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody, aLevel } from './util.mjs';
+import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody, aLevel, centroid } from './util.mjs';
 
 const N = 1 << 16;
 
@@ -198,4 +198,18 @@ test('changing a setting while playing does not let stopped strings and dead not
     };
     assert.ok(run(0.32) < run(null) + 3, `${bridged ? 'modelled' : 'rigid'}: ${run(0.32).toFixed(1)} dB after a setting change vs ${run(null).toFixed(1)} dB without`);
   }
+});
+
+test('a note stopped by a barre is darker and shorter than one under a fingertip', () => {
+  for (const [s, fret] of [[0, 5], [3, 5], [5, 7]]) {
+    const tip = note(s, fret, {}, {}, 2), barre = note(s, fret, { br: true }, {}, 2);
+    const c = centroid(barre, 0.3, 0.5) / centroid(tip, 0.3, 0.5);
+    assert.ok(c < 0.92, `string ${s}: barred note at ${(100 * c).toFixed(0)} % of the brightness`);
+    const late = db(rms(barre, 1.5, 1.8)) - db(rms(tip, 1.5, 1.8));
+    assert.ok(late < -1 && late > -12, `string ${s}: ${late.toFixed(1)} dB after 1.5 s`);
+  }
+  // the second string of a 12-string course is barred too
+  const f = engine({ preset: 'twelve' }), g = engine({ preset: 'twelve' });
+  for (const [x, br] of [[f, false], [g, true]]) x.post({ type: 'n', t: 0.01, s: 3, f: midiHz(OPEN[3] + 5), v: 0.8, k: '', fr: true, d: 1, br });
+  assert.ok(centroid(render(g, 1), 0.3, 0.5) < 0.95 * centroid(render(f, 1), 0.3, 0.5));
 });

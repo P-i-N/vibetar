@@ -462,7 +462,7 @@ class PluckVoice {
 
   // ev.k: technique flags - m palm mute, h hammer-on/pull-off, s slide,
   // b bend, v vibrato, * natural harmonic (ev.hb = touch point, as the
-  // fraction of the string between finger and bridge), x dead note
+  // fraction of the string between finger and bridge), x dead note; ev.br: stopped by a barre
   noteOn(ev, P, t) {
     const k = ev.k || '';
     const f = ev.f * this.ratio;
@@ -471,6 +471,7 @@ class PluckVoice {
     const legato = (slide || k.indexOf('h') >= 0) && this.sounding && !harm;
     let b1 = this.b1 * P.b1Scale, b3 = this.b3 * P.b3Scale;
     if (ev.fr) { b1 *= 1.35; b3 *= 1.2; }
+    if (ev.br) { b1 *= 1.25; b3 *= 1.9; } // the flat side of a finger presses softer than a fingertip
     if (pm) b3 *= 1.6;
     else if (dead) { b1 = b1 * 2 + 6; b3 *= 3; }
     this.setDamping(f, b1, b3);
@@ -890,7 +891,7 @@ class VibetarEngine {
           const first = ev.d < 0 ? ev.s : ev.s + 6;
           const second = ev.d < 0 ? ev.s + 6 : ev.s;
           this.note(vs[first], ev, t);
-          this.post({ type: 'n', vi: second, frame: frame + this.pairGap + ((this.rnd() * 90) | 0), s: ev.s, f: ev.f, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim });
+          this.post({ type: 'n', vi: second, frame: frame + this.pairGap + ((this.rnd() * 90) | 0), s: ev.s, f: ev.f, v: ev.v, k: ev.k, fr: ev.fr, br: ev.br, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim });
         } else {
           this.note(vs[ev.vi != null ? ev.vi : ev.s], ev, t);
         }
@@ -915,7 +916,7 @@ class VibetarEngine {
 
   note(v, ev, t) {
     if (v.pitchMul && v.pitchMul !== 1) {
-      v.noteOn({ f: ev.f * v.pitchMul, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim }, this.P, t);
+      v.noteOn({ f: ev.f * v.pitchMul, v: ev.v, k: ev.k, fr: ev.fr, br: ev.br, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim }, this.P, t);
     } else v.noteOn(ev, this.P, t);
   }
 
