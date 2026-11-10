@@ -275,3 +275,23 @@ test('building the body twice gives identical responses', async () => {
   for (let c = 0; c < 8; c++) assert.deepEqual(a.irs[c], b.irs[c]);
   assert.deepEqual([...a.bridge.phi], [...b.bridge.phi]);
 });
+
+// ---- cache ------------------------------------------------------------------------
+import { validBody, cacheKey } from '../js/audio.js';
+
+test('a cached body is only used if it matches version, instrument and sample rate', () => {
+  const good = cachedBody('steel');
+  assert.ok(validBody(good, 'steel', FS));
+  assert.ok(!validBody(good, 'nylon', FS));
+  assert.ok(!validBody(good, 'steel', 44100));
+  assert.ok(!validBody({ ...good, version: MODEL_VERSION - 1 }, 'steel', FS));
+  assert.ok(!validBody({ ...good, irs: good.irs.slice(0, 7) }, 'steel', FS));
+  assert.ok(!validBody({ ...good, irs: good.irs.map((h, i) => (i === 3 ? h.subarray(0, 100) : h)) }, 'steel', FS));
+  const bad = good.irs.map((h) => h.slice());
+  bad[5].fill(NaN, 1000, 20000);
+  assert.ok(!validBody({ ...good, irs: bad }, 'steel', FS));
+  assert.ok(!validBody({ ...good, bridge: null }, 'steel', FS));
+  assert.ok(!validBody(null, 'steel', FS) && !validBody('junk', 'steel', FS) && !validBody({}, 'steel', FS));
+  assert.notEqual(cacheKey('steel', 48000), cacheKey('steel', 44100));
+  assert.ok(cacheKey('steel', 48000).includes(String(MODEL_VERSION)));
+});

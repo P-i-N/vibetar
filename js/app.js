@@ -542,6 +542,11 @@ function buildSettings() {
     song.inst.picking = +b.dataset.v; syncInstControls(); audio.syncInstrument(); scheduleSave();
     preview(cur.s, S.getCell(song, cur.step, cur.s) || { f: 0, t: '' });
   });
+  $('bodyModel').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    song.inst.bodyModel = +b.dataset.v; syncInstControls(); audio.syncInstrument(); scheduleSave();
+  });
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.dataset.preset === song.inst.preset) return;
@@ -579,6 +584,8 @@ function buildSettings() {
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
   $('picking').hidden = song.inst.preset === 'bowed';
+  $('bodyModelRow').hidden = song.inst.preset === 'bowed';
+  for (const b of $('bodyModel').children) b.classList.toggle('on', +b.dataset.v === (song.inst.bodyModel ? 1 : 0));
   for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
   for (const r of sliders) r();
 }
@@ -776,6 +783,7 @@ async function exportWav() {
 // ---- boot ----------------------------------------------------------------------
 
 async function boot() {
+  audio.onNotice = (msg) => toast(msg, 5000);
   buildSettings();
   bindInput();
   let ok = await loadFromHash();

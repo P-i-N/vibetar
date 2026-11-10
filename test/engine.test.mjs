@@ -141,3 +141,24 @@ test('combined techniques and a storm of events stay bounded', () => {
     assert.ok(db(rms(x, 9.6, 9.9)) < -50, `${preset}: does not die away (${db(rms(x, 9.6, 9.9)).toFixed(1)} dB)`);
   }
 });
+
+test('the engine renders four channels that add up to the mono output', () => {
+  const play = (e) => {
+    [[0, 3], [2, 2], [3, 0], [5, 3]].forEach(([s, fret], i) => e.post({ type: 'n', t: 0.02 + i * 0.01, s, f: midiHz(OPEN[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1 }));
+  };
+  const a = engine(), b = engine();
+  play(a); play(b);
+  const mono = render(a, 0.5);
+  const n = mono.length, ch = [0, 1, 2, 3].map(() => new Float32Array(n));
+  for (let i = 0; i < n; i += 128) b.render(ch.map((c) => c.subarray(i, i + 128)), 128, i);
+  const mixH = 0.6; // steel
+  for (let i = 0; i < n; i += 97) assert.ok(Math.abs(mono[i] - (ch[0][i] + ch[1][i] + ch[2][i] + mixH * ch[3][i])) < 1e-5, `sample ${i}`);
+  // strings 0 and 5 were played: bass and treble zones carry signal, and so does the along-top channel
+  for (const c of [0, 1, 2, 3]) assert.ok(peak(ch[c]) > 0.01, `channel ${c} is silent`);
+  // only string 2-3 notes land in the middle zone
+  const e = engine();
+  e.post({ type: 'n', t: 0.02, s: 0, f: midiHz(43), v: 0.8, k: '', fr: true, d: 1 });
+  const one = [0, 1, 2, 3].map(() => new Float32Array(4096));
+  for (let i = 0; i < 4096; i += 128) e.render(one.map((c) => c.subarray(i, i + 128)), 128, i);
+  assert.ok(peak(one[0]) > 0.05 && peak(one[1]) < 1e-3 && peak(one[2]) < 1e-3);
+});

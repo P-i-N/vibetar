@@ -116,3 +116,14 @@ test('palm mute runs are found for the P.M. brackets', () => {
   S.setCell(song, 8, 0, { f: 3, t: '' });
   assert.deepEqual(S.palmMuteRuns(song), [[0, 4], [8, 8]]);
 });
+
+test('the body model setting defaults to modelled and survives the link', async () => {
+  assert.equal(S.INSTRUMENTS.steel.bodyModel, 1);
+  assert.equal(S.INSTRUMENTS.nylon.bodyModel, 1);
+  assert.equal(S.INSTRUMENTS.bowed.bodyModel, 0);
+  const song = S.newSong();
+  song.inst.bodyModel = 0;
+  assert.equal((await S.decodeSong(await S.encodeSong(song))).inst.bodyModel, 0);
+  const old = S.unpackSong({ v: 1, t: 'old', b: 100, g: [4, 4, 1], u: [40, 45, 50, 55, 59, 64], c: 0, n: 'A3', i: ['steel', 0.17, 0.72, 0, 0, 0.85, 0.3, 14, 0.35, 1], x: [1, 0.26, 2.2, 0.5, 0, '8d', 0.35, 0.22, 0.8] });
+  assert.equal(old.inst.bodyModel, 1);
+});

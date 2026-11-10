@@ -621,7 +621,10 @@ class PluckVoice {
       } else if (this.tkT >= 1) this.tn = 0;
     }
     this.w = (w + 1) & m;
-    return (yv + yh * this.mixH) * this.gain + sq;
+    // towards-top motion (plus finger noise) is returned, along-top motion kept aside:
+    // the body hears the two through different paths
+    this.outH = yh * this.gain;
+    return yv * this.gain + sq;
   }
 
   clear() {
@@ -773,7 +776,8 @@ class VibetarEngine {
     this.mode = 'pluck';
     this.preset = '';
     this.alpha = 0;
-    this.dcx = 0; this.dcy = 0;
+    this.dcx = new Float64Array(4); this.dcy = new Float64Array(4);
+    this.mixH = 0.6;
     this.dcR = 1 - (TAU * 18) / fs;
     this.outGain = 0.3;
     this.pairGap = Math.round(0.011 * fs);
@@ -796,6 +800,7 @@ class VibetarEngine {
     if (c.pick != null) P.pick = clamp(Math.round(c.pick), 0, 4);
     P.pickNoise = pr.pickNoise || 0;
     this.mode = pr.mode;
+    this.mixH = pr.mixH || 0;
     const nPair = pr.pair ? 6 : 0;
     this.alpha = this.mode === 'pluck' ? clamp(c.symp != null ? c.symp : 0.3, 0, 1) * 0.0035 : 0;
     if (rebuild) {
@@ -827,7 +832,7 @@ class VibetarEngine {
         v.polDet = Math.pow(2, cents / 1200);
         v.alpha = this.alpha;
         v.wound = !isPair && s < (pr.wound || 0);
-        v.sIdx = s;
+        v.sIdx = s; v.zone = s >> 1;
         // longitudinal resonance that colours the finger noise
         const w0 = (TAU * (1500 + 330 * s)) / fs, al = Math.sin(w0) / 5;
         v.sqB0 = al / (1 + al); v.sqA1 = (-2 * Math.cos(w0)) / (1 + al); v.sqA2 = (1 - al) / (1 + al);
@@ -890,8 +895,14 @@ class VibetarEngine {
 
   flush() { this.queue.length = 0; }
 
+  // Output: four channels - towards-top motion of the bass (strings 1-2 from the
+  // bottom), middle and treble strings, and the along-top motion of all strings.
+  // A single Float32Array instead gets the mono mix  ch0 + ch1 + ch2 + mixH·ch3.
   render(out, n, frame0) {
     const vs = this.voices, nv = vs.length, q = this.queue;
+    const four = Array.isArray(out);
+    const o0 = four ? out[0] : out, o1 = four ? out[1] : null, o2 = four ? out[2] : null, o3 = four ? out[3] : null;
+    const dx = this.dcx, dy = this.dcy, R = this.dcR, mixH = this.mixH;
     const t = frame0 / this.fs;
     for (let k = 0; k < nv; k++) vs[k].updateMod(t, n);
     let i = 0;
@@ -903,9 +914,10 @@ class VibetarEngine {
         for (; i < end; i++) {
           let o = 0;
           for (let k = 0; k < nv; k++) o += vs[k].tick();
-          const y = o - this.dcx + this.dcR * this.dcy;
-          this.dcx = o; this.dcy = y;
-          out[i] = y * 0.5;
+          const y = o - dx[0] + R * dy[0];
+          dx[0] = o; dy[0] = y;
+          o0[i] = y * 0.5;
+          if (four) { o1[i] = 0; o2[i] = 0; o3[i] = 0; }
         }
       } else {
         const alpha = this.alpha, g = this.outGain;
@@ -913,11 +925,17 @@ class VibetarEngine {
           let sum = 0;
           for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
           const vj = sum * alpha;
-          let o = 0;
-          for (let k = 0; k < nv; k++) o += vs[k].tickWrite(vj);
-          const y = o - this.dcx + this.dcR * this.dcy;
-          this.dcx = o; this.dcy = y;
-          out[i] = y * g;
+          let a = 0, b = 0, c = 0, h = 0;
+          for (let k = 0; k < nv; k++) {
+            const v = vs[k], x = v.tickWrite(vj);
+            if (v.zone === 0) a += x; else if (v.zone === 1) b += x; else c += x;
+            h += v.outH;
+          }
+          let y = a - dx[0] + R * dy[0]; dx[0] = a; dy[0] = y; a = y * g;
+          y = b - dx[1] + R * dy[1]; dx[1] = b; dy[1] = y; b = y * g;
+          y = c - dx[2] + R * dy[2]; dx[2] = c; dy[2] = y; c = y * g;
+          y = h - dx[3] + R * dy[3]; dx[3] = h; dy[3] = y; h = y * g;
+          if (four) { o0[i] = a; o1[i] = b; o2[i] = c; o3[i] = h; } else o0[i] = a + b + c + mixH * h;
         }
       }
     }
@@ -942,8 +960,8 @@ if (typeof registerProcessor === 'function') {
     }
     process(inputs, outputs) {
       const ch = outputs[0];
-      this.engine.render(ch[0], ch[0].length, currentFrame);
-      for (let c = 1; c < ch.length; c++) ch[c].set(ch[0]);
+      if (ch.length >= 4) this.engine.render(ch, ch[0].length, currentFrame);
+      else this.engine.render(ch[0], ch[0].length, currentFrame);
       return true;
     }
   });

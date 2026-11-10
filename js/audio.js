@@ -2,10 +2,83 @@
 
 import { makeBodyIR, makeReverbIR } from './ir.js';
 import { DELAY_TIMES, songEvents, totalSteps } from './song.js';
+import { MODEL_VERSION } from './body/model.js';
 
 const WORKLET_URL = new URL('./worklet.js', import.meta.url).href;
 const irCache = new Map();
 const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7, bowed: 1.25 };
+// how much of the strings' along-top motion the classic body lets through
+const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6, bowed: 0 };
+const MODELLED = new Set(['steel', 'nylon', 'twelve']);
+export const hasModel = (inst) => !!inst.bodyModel && MODELLED.has(inst.preset);
+
+// ---- modelled bodies: built once in a worker, kept in IndexedDB -------------------
+
+export const cacheKey = (name, fs) => `body:${MODEL_VERSION}:${name}:${fs}`;
+
+// is this (possibly cached) record a usable body for this instrument and sample rate?
+export function validBody(rec, name, fs) {
+  if (!rec || typeof rec !== 'object' || rec.version !== MODEL_VERSION || rec.name !== name || rec.fs !== fs) return false;
+  if (!Array.isArray(rec.irs) || rec.irs.length !== 8) return false;
+  const len = rec.irs[0] && rec.irs[0].length;
+  if (!len) return false;
+  for (const h of rec.irs) {
+    if (!(h instanceof Float32Array) || h.length !== len) return false;
+    for (let k = 0; k < 16; k++) if (!Number.isFinite(h[Math.floor((k * (len - 1)) / 15)])) return false;
+  }
+  const b = rec.bridge;
+  return !!b && b.K > 0 && !!b.phi && b.phi.length === 6 * b.K && !!b.z && b.z.length === 6;
+}
+
+function idb(op, key, value) {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('no IndexedDB')); return; }
+    const open = indexedDB.open('vibetar', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('bodies');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      try {
+        const store = db.transaction('bodies', op === 'get' ? 'readonly' : 'readwrite').objectStore('bodies');
+        const rq = op === 'get' ? store.get(key) : op === 'put' ? store.put(value, key) : store.delete(key);
+        rq.onsuccess = () => { resolve(rq.result); db.close(); };
+        rq.onerror = () => { reject(rq.error); db.close(); };
+      } catch (e) { reject(e); db.close(); }
+    };
+  });
+}
+
+function buildInWorker(name, fs) {
+  return new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker(new URL('./body/worker.js', import.meta.url), { type: 'module' }); } catch (e) { reject(e); return; }
+    w.onmessage = (e) => { w.terminate(); if (e.data && e.data.ok) resolve(e.data.body); else reject(new Error((e.data && e.data.error) || 'body model failed')); };
+    w.onerror = (e) => { w.terminate(); reject(new Error(e.message || 'body worker failed')); };
+    w.postMessage({ name, fs });
+  });
+}
+
+async function loadBody(key, name, fs) {
+  const cached = await idb('get', key).catch(() => null);
+  if (validBody(cached, name, fs)) return cached;
+  if (cached) idb('delete', key).catch(() => {}); // stale or damaged: never used
+  const body = await buildInWorker(name, fs);
+  if (!validBody(body, name, fs)) throw new Error('the body model returned an unusable result');
+  idb('put', key, body).catch(() => {});
+  return body;
+}
+
+const bodies = new Map();
+// the modelled body of an instrument (a promise; built or fetched once per page)
+export function getBody(name, fs) {
+  const key = cacheKey(name, fs);
+  if (!bodies.has(key)) {
+    const p = loadBody(key, name, fs);
+    p.catch(() => bodies.delete(key));
+    bodies.set(key, p);
+  }
+  return bodies.get(key);
+}
 
 function toBuffer(ctx, ir) {
   const buf = ctx.createBuffer(2, ir.L.length, ctx.sampleRate);
@@ -37,12 +110,30 @@ class Graph {
     const c = ctx;
     this.ctx = c; this.node = node;
     const gain = (v) => { const g = c.createGain(); g.gain.value = v; return g; };
+    // The engine sends four channels: towards-top motion of the bass, middle and treble
+    // strings, and the along-top motion of all of them.
+    const split = c.createChannelSplitter(4);
+    node.connect(split);
+    // classic body: one response for everything
+    this.mono = gain(1); this.rockMix = gain(0.6);
+    for (let z = 0; z < 3; z++) split.connect(this.mono, z);
+    split.connect(this.rockMix, 3); this.rockMix.connect(this.mono);
     this.body = c.createConvolver(); this.body.normalize = false;
+    this.classicMix = gain(1);
+    this.mono.connect(this.body); this.body.connect(this.classicMix);
+    // modelled body: a response per bridge zone, and one for the bridge rocking
+    this.modelMix = gain(0);
+    this.zones = [0, 1, 2, 3].map((z) => {
+      const conv = c.createConvolver(); conv.normalize = false;
+      split.connect(conv, z); conv.connect(this.modelMix);
+      return conv;
+    });
+    this.loaded = ''; this.want = ''; this.showing = 'classic'; this.failed = false; this.onNotice = null;
     this.bodyGain = gain(0.85); this.directGain = gain(0.1);
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 58; hp.Q.value = 0.7;
     this.inst = gain(1);
-    node.connect(this.body); this.body.connect(this.bodyGain); this.bodyGain.connect(hp);
-    node.connect(this.directGain); this.directGain.connect(hp);
+    this.classicMix.connect(this.bodyGain); this.modelMix.connect(this.bodyGain); this.bodyGain.connect(hp);
+    this.mono.connect(this.directGain); this.directGain.connect(hp);
     hp.connect(this.inst);
     this.master = gain(1);
     this.inst.connect(this.master);
@@ -91,10 +182,44 @@ class Graph {
     this.preset = '';
   }
 
-  setInstrument(inst, song, now) {
+  loadModel(body, preset) {
+    for (let z = 0; z < 4; z++) this.zones[z].buffer = toBuffer(this.ctx, { L: body.irs[2 * z], R: body.irs[2 * z + 1] });
+    this.loaded = preset;
+  }
+
+  // crossfade between the classic and the modelled body
+  showModel(on, now) {
+    this.showing = on ? 'modelled' : 'classic';
+    const t = now ? this.ctx.currentTime : 0;
+    for (const [p, v] of [[this.modelMix.gain, on ? 1 : 0], [this.classicMix.gain, on ? 0 : 1]]) {
+      if (now) { p.cancelScheduledValues(t); p.setTargetAtTime(v, t, 0.07); } else p.setValueAtTime(v, 0);
+    }
+  }
+
+  // `body`: an already built modelled body (offline rendering); otherwise it is fetched
+  setInstrument(inst, song, now, body) {
     if (inst.preset !== this.preset) {
       this.preset = inst.preset;
       this.body.buffer = bodyBuffer(this.ctx, inst.preset);
+      this.rockMix.gain.setValueAtTime(MIX_H[inst.preset] || 0, 0);
+    }
+    const wanted = hasModel(inst) ? inst.preset : '';
+    this.want = wanted;
+    if (!wanted) this.showModel(false, now);
+    else if (this.loaded === wanted) this.showModel(true, now);
+    else {
+      this.showModel(false, now); // the classic body plays until the modelled one is ready
+      if (body) { this.loadModel(body, wanted); this.showModel(true, now); }
+      else {
+        getBody(wanted, this.ctx.sampleRate).then((b) => {
+          if (this.want !== wanted) return;
+          this.loadModel(b, wanted); this.showModel(true, true);
+        }).catch((err) => {
+          console.warn('modelled body unavailable:', err);
+          if (!this.failed && this.onNotice) this.onNotice('Using the classic body (the modelled one could not be built)');
+          this.failed = true;
+        });
+      }
     }
     const t = now ? this.ctx.currentTime : 0;
     const set = (p, v) => (now ? p.setTargetAtTime(v, t, 0.03) : p.setValueAtTime(v, 0));
@@ -134,7 +259,7 @@ class Graph {
 }
 
 export class AudioEngine {
-  constructor() { this.ctx = null; this.graph = null; this.ready = null; this.song = null; }
+  constructor() { this.ctx = null; this.graph = null; this.ready = null; this.song = null; this.onNotice = null; }
 
   // must first be called from a user gesture
   init() {
@@ -143,8 +268,9 @@ export class AudioEngine {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         this.ctx = new Ctx({ latencyHint: 'interactive' });
         await this.ctx.audioWorklet.addModule(WORKLET_URL);
-        const node = new AudioWorkletNode(this.ctx, 'vibetar-strings', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
+        const node = new AudioWorkletNode(this.ctx, 'vibetar-strings', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [4] });
         this.graph = new Graph(this.ctx, node);
+        this.graph.onNotice = (msg) => this.onNotice && this.onNotice(msg);
         if (this.song) { this.graph.setInstrument(this.song.inst, this.song, false); this.graph.setFx(this.song.fx, this.song.bpm, false); }
       })();
       this.ready.catch(() => { this.ready = null; });
@@ -187,16 +313,18 @@ export async function renderSong(song, rnd, sampleRate = 48000) {
   const lead = 0.05;
   const tail = Math.min(12, (song.fx.revOn ? song.fx.revSize : 0) + 4);
   const dur = lead + n * stepDur + tail;
+  // the modelled body must be there before rendering starts; without it the classic one is used
+  const body = hasModel(song.inst) ? await getBody(song.inst.preset, sampleRate).catch(() => null) : null;
   const ctx = new OfflineAudioContext(2, Math.ceil(dur * sampleRate), sampleRate);
   await ctx.audioWorklet.addModule(WORKLET_URL);
   const events = songEvents(song, 0, n, lead, rnd);
   if (song.inst.preset === 'bowed') for (let s = 0; s < 6; s++) events.push({ type: 'o', t: lead + n * stepDur, s });
   const node = new AudioWorkletNode(ctx, 'vibetar-strings', {
-    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
+    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [4],
     processorOptions: { cfg: engineCfg(song.inst, song), events },
   });
   const graph = new Graph(ctx, node);
-  graph.setInstrument(song.inst, song, false);
+  graph.setInstrument(body ? song.inst : { ...song.inst, bodyModel: 0 }, song, false, body);
   graph.setFx(song.fx, song.bpm, false);
   // fade the ring-out at the very end
   const v = graph.vol.gain.value;
