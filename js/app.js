@@ -385,7 +385,7 @@ async function play(fromTop) {
   const bar = S.stepsPerBar(song);
   let start = fromTop ? 0 : Math.floor(cur.step / bar) * bar;
   if (start < from || start >= to) start = from;
-  Object.assign(player, { playing: true, step: start, from, to, nextTime: audio.time + 0.08, queue: [], ended: false, endTime: Infinity });
+  Object.assign(player, { playing: true, step: start, from, to, nextTime: audio.time + 0.08, queue: [], ended: false, endTime: Infinity, perf: S.newPerformer() });
   $('play').classList.add('on'); $('playIco').textContent = '■'; $('playLbl').textContent = 'Stop';
   schedule();
   player.timer = setInterval(schedule, 25);
@@ -405,7 +405,7 @@ function schedule() {
         break;
       }
     }
-    for (const ev of S.stepEvents(song, player.step, player.nextTime, Math.random)) events.push(ev);
+    for (const ev of S.stepEvents(song, player.step, player.nextTime, Math.random, player.perf)) events.push(ev);
     player.queue.push({ step: player.step, t: player.nextTime });
     player.nextTime += 60 / song.bpm / song.spb;
     player.step++;

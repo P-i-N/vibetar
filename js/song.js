@@ -34,12 +34,14 @@ export function toggleFlag(t, flag) {
 }
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3 },
-  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25, picking: 2 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0 },
+  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0, picking: 0 },
 };
-const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise'];
+const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise', 'picking'];
+// picking techniques, by inst.picking
+export const PICKING = ['pick', 'flesh', 'nailS', 'nailL', 'hybrid'];
 // number of wound strings, counted from the lowest
 const WOUND = { steel: 4, nylon: 3, twelve: 4 };
 
@@ -260,17 +262,66 @@ function fingerTravel(song, step, s, cell, tNote, stepDur, rnd) {
 }
 
 // Events (for the string engine) produced by one grid step starting at time t.
-export function stepEvents(song, step, t, rnd) {
+// ---- the performer -----------------------------------------------------------
+// What a player carries from note to note: which finger or pick direction came
+// last, and a slow drift in timing, loudness and plucking point. Unlike
+// independent jitter, drift keeps neighbouring notes together.
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clampTo = (x, lim) => Math.max(-lim, Math.min(lim, x));
+
+export function newPerformer(seed) {
+  return {
+    rnd: seed == null ? Math.random : mulberry32(seed),
+    drift: { t: 0, v: 0, p: 0 },                       // seconds, relative loudness, millimetres
+    last: { finger: 0, fingerT: [-9, -9, -9, -9, -9], pickT: -9, pickD: 1 },
+  };
+}
+
+const FINGER_STRENGTH = [1.0, 1.0, 0.97, 0.9, 1.0]; // thumb, index, middle, ring, pick
+const PULL = 0.08;                                   // how strongly the drift returns to the beat
+
+function driftStep(perf, rnd) {
+  const g = () => (rnd() + rnd() + rnd() - 1.5) * 2; // roughly standard normal
+  const d = perf.drift;
+  d.t = clampTo(d.t * (1 - PULL) + 0.0012 * g(), 0.007);
+  d.v = clampTo(d.v * (1 - PULL) + 0.02 * g(), 0.12);
+  d.p = clampTo(d.p * (1 - PULL) + 0.6 * g(), 4);
+}
+
+// seconds since the previous note on string s, if it is close enough to matter to the stroke
+function gapBefore(song, step, s, stepDur) {
+  for (let i = 1; i <= step && i * stepDur < 0.05; i++) {
+    const c = getCell(song, step - i, s);
+    if (c && c.f !== '.') return i * stepDur;
+  }
+  return 0;
+}
+
+// Events (for the string engine) produced by one grid step starting at time t.
+// A note's time is the moment the string is let go.
+export function stepEvents(song, step, t, rnd, perf) {
   const col = song.cols[step];
   if (!col) return [];
   const strings = [];
   for (let s = 0; s < 6; s++) if (col[s]) strings.push(s);
   if (!strings.length) return [];
+  if (!perf) perf = newPerformer();
   const { spb, inst } = song;
   const bar = spb * song.bpb;
   const stepDur = 60 / song.bpm / spb;
   const pos = step % bar, inBeat = pos % spb;
   const chord = chordAt(song, step);
+  const plucked = inst.preset !== 'bowed';
+  const technique = plucked ? inst.picking || 0 : -1;
+  const last = perf.last;
   // strum direction: down on the beat, up on the off-beats
   let down = true;
   if (chord && inBeat !== 0) {
@@ -282,21 +333,50 @@ export function stepEvents(song, step, t, rnd) {
   }
   const base = pos === 0 ? 0.92 : inBeat === 0 ? 0.82 : 0.72;
   const h = inst.human;
+  driftStep(perf, rnd);
   let spread = strings.length > 1 ? inst.strum / 1000 : 0;
   if (spread * (strings.length - 1) > 0.7 * stepDur) spread = (0.7 * stepDur) / (strings.length - 1);
   if (!down) { strings.reverse(); spread *= 0.8; }
-  const jitter = (rnd() - 0.5) * 0.008 * h;
+  const sounding = strings.filter((s) => col[s].f !== '.');
+  // a pick playing single notes in a run alternates; on the beat it comes down
+  if (technique === 0 && sounding.length === 1 && !chord) {
+    down = inBeat === 0 || t - last.pickT > 0.35 ? true : last.pickD < 0;
+    last.pickT = t; last.pickD = down ? 1 : -1;
+  }
+  const jitter = h * (perf.drift.t + (rnd() - 0.5) * 0.002);
   const out = [];
   strings.forEach((s, k) => {
     const cell = col[s];
-    const tt = Math.max(0, t + jitter + k * spread * (1 + (rnd() - 0.5) * 0.5 * h) + (rnd() - 0.5) * 0.006 * h);
+    const tt = Math.max(0, t + jitter + k * spread * (1 + (rnd() - 0.5) * 0.5 * h));
     if (cell.f === '.') { out.push({ type: 'o', t: tt, s }); return; }
-    let vel = base * (1 + (rnd() - 0.5) * 0.3 * h);
+    let vel = base * (1 + h * (perf.drift.v + (rnd() - 0.5) * 0.06));
     if (chord) vel *= (down ? 0.9 : 0.8) * (1 - 0.025 * k);
-    if ((cell.t || '').includes('>')) vel = Math.min(1.15, vel * 1.3 + 0.08);
+    else if (!down) vel *= 0.93;
+    const accent = (cell.t || '').includes('>');
+    if (accent) vel = Math.min(1.15, vel * 1.3 + 0.08);
     const q = fingerTravel(song, step, s, cell, tt, stepDur, rnd);
     if (q) out.push(q);
-    out.push(cellEvent(song, s, cell, tt, vel, down ? 1 : -1));
+    const ev = cellEvent(song, s, cell, tt, vel, down ? 1 : -1);
+    if (plucked) {
+      // who plays it: 0 thumb, 1 index, 2 middle, 3 ring, 4 the pick
+      let finger = 4;
+      const fingers = technique >= 1 && technique <= 3 ? true : technique === 4 && s >= 3;
+      if (fingers) {
+        if (s < 3) finger = 0;
+        else if (sounding.filter((x) => x >= 3).length > 1) finger = s - 2;       // one finger per string
+        else finger = last.finger === 1 ? 2 : 1;                                   // alternate
+        if (finger) last.finger = finger;
+      }
+      ev.fi = finger;
+      ev.fg = finger === 4 ? 0 : finger === 0 && technique !== 4 ? 4 : technique === 4 ? 2 : technique;
+      ev.v *= FINGER_STRENGTH[finger] * (finger !== 4 && tt - last.fingerT[finger] < 0.12 ? 0.9 : 1);
+      last.fingerT[finger] = tt;
+      if (accent) ev.rs = true;
+      if (h > 0) ev.pp = Math.round(h * perf.drift.p * 100) / 100;
+      const gap = gapBefore(song, step, s, stepDur);
+      if (gap) ev.gap = gap;
+    }
+    out.push(ev);
   });
   return out;
 }
@@ -318,10 +398,10 @@ export function palmMuteRuns(song) {
   return runs;
 }
 
-export function songEvents(song, from, to, t0, rnd) {
+export function songEvents(song, from, to, t0, rnd, perf = newPerformer()) {
   const stepDur = 60 / song.bpm / song.spb;
   const out = [];
-  for (let i = from; i < to; i++) for (const ev of stepEvents(song, i, t0 + (i - from) * stepDur, rnd)) out.push(ev);
+  for (let i = from; i < to; i++) for (const ev of stepEvents(song, i, t0 + (i - from) * stepDur, rnd, perf)) out.push(ev);
   out.sort((a, b) => a.t - b.t);
   return out;
 }

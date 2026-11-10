@@ -29,7 +29,7 @@ function reverbBuffer(ctx, size, tone) {
 const engineCfg = (inst, song) => ({
   type: 'cfg', preset: inst.preset, open: song.tuning.map((m) => m + song.capo),
   pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain,
-  symp: inst.symp, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise,
+  symp: inst.symp, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise, pick: inst.picking,
 });
 
 class Graph {
