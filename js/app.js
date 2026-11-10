@@ -527,7 +527,14 @@ function buildSettings() {
   mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms');
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
 
-  const fx = (k, slow) => [() => song.fx[k], (v) => { song.fx[k] = v; fxChanged(slow); }];
+  const fx = (k, slow) => [() => song.fx[k], (v) => { song.fx[k] = v; syncFxControls(); fxChanged(slow); }];
+  for (const [k, r] of Object.entries(S.REVERBS)) $('revSpace').append(new Option(r.name, k));
+  $('revSpace').append(new Option('Custom', ''));
+  $('revSpace').lastChild.disabled = true;
+  $('revSpace').addEventListener('change', (e) => {
+    S.setReverbSpace(song.fx, e.target.value);
+    syncFxControls(); for (const r of sliders) r(); fxChanged(); scheduleSave();
+  });
   mkSlider($('revSliders'), ...fx('revMix'), 'Mix', 0, 0.8, 0.01, pct);
   mkSlider($('revSliders'), ...fx('revSize', true), 'Decay', 0.3, 8, 0.1, (v) => v.toFixed(1) + ' s');
   mkSlider($('revSliders'), ...fx('revTone', true), 'Tone', 0, 1, 0.02, pct);
@@ -536,7 +543,7 @@ function buildSettings() {
   mkSlider($('masterSliders'), ...fx('vol'), 'Volume', 0, 1, 0.01, pct);
 
   for (const id of ['revOn', 'dlyOn']) {
-    $(id).addEventListener('change', (e) => { song.fx[id] = e.target.checked; fxChanged(); scheduleSave(); });
+    $(id).addEventListener('change', (e) => { song.fx[id] = e.target.checked; syncFxControls(); fxChanged(); scheduleSave(); });
     $(id).parentElement.addEventListener('click', (e) => e.stopPropagation());
   }
   $('dlyTime').addEventListener('click', (e) => {
@@ -589,6 +596,7 @@ function syncInstControls() {
 }
 function syncFxControls() {
   $('revOn').checked = song.fx.revOn; $('dlyOn').checked = song.fx.dlyOn;
+  $('revSpace').value = S.reverbSpace(song.fx);
   for (const b of $('dlyTime').children) b.classList.toggle('on', b.dataset.v === song.fx.dlyTime);
 }
 function syncSongControls() {

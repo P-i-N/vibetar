@@ -17,7 +17,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Three instruments: steel-string, nylon and 12-string
 - Five picking techniques: pick, bare fingers, short nails, long nails, hybrid
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
-- Convolution reverb and tempo-synced ping-pong delay
+- Convolution reverb with spaces from a small room to a cathedral, and tempo-synced ping-pong delay
 - Share by link, WAV export, no account, no server
 
 ## How the sound is made

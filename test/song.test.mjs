@@ -105,6 +105,22 @@ test('no finger travel without a real shift', () => {
   none((s) => { S.setCell(s, 4, 1, { f: 8, t: '' }); });                                          // nothing before
 });
 
+test('reverb spaces: the default is the stage; a changed setting is no space', () => {
+  const fx = { ...S.FX_DEFAULTS };
+  assert.equal(S.reverbSpace(fx), 'stage');
+  for (const k of Object.keys(S.REVERBS)) { S.setReverbSpace(fx, k); assert.equal(S.reverbSpace(fx), k); }
+  S.setReverbSpace(fx, 'room');
+  fx.revSize += 0.1;
+  assert.equal(S.reverbSpace(fx), '');
+  // "none" only turns the reverb off
+  S.setReverbSpace(fx, 'none');
+  assert.equal(fx.revOn, false);
+  assert.ok(Math.abs(fx.revSize - 0.7) < 1e-9);
+  // the spaces grow in decay and mix
+  const spaces = Object.values(S.REVERBS).filter((r) => r.revOn);
+  for (let i = 1; i < spaces.length; i++) assert.ok(spaces[i].revSize > spaces[i - 1].revSize && spaces[i].revMix > spaces[i - 1].revMix);
+});
+
 test('palm mute runs are found for the P.M. brackets', () => {
   const song = blank();
   S.setCell(song, 0, 0, { f: 0, t: 'm' });

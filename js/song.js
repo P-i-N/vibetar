@@ -50,6 +50,33 @@ export const FX_DEFAULTS = {
   dlyOn: false, dlyTime: '8d', dlyFb: 0.35, dlyMix: 0.22, vol: 0.8,
 };
 const FX_KEYS = ['revOn', 'revMix', 'revSize', 'revTone', 'dlyOn', 'dlyTime', 'dlyFb', 'dlyMix', 'vol'];
+// Reverb spaces: mix, decay (RT60 in seconds) and tone. "Stage" is the default.
+export const REVERBS = {
+  none: { name: 'None', revOn: false },
+  room: { name: 'Room', revOn: true, revMix: 0.16, revSize: 0.6, revTone: 0.45 },
+  studio: { name: 'Studio', revOn: true, revMix: 0.2, revSize: 1.2, revTone: 0.6 },
+  stage: { name: 'Stage', revOn: true, revMix: 0.26, revSize: 2.2, revTone: 0.5 },
+  hall: { name: 'Concert hall', revOn: true, revMix: 0.32, revSize: 3.2, revTone: 0.48 },
+  church: { name: 'Church', revOn: true, revMix: 0.38, revSize: 4.8, revTone: 0.4 },
+  cathedral: { name: 'Cathedral', revOn: true, revMix: 0.44, revSize: 7.5, revTone: 0.34 },
+};
+// the reverb space these settings are, or '' when they have been changed by hand
+export function reverbSpace(fx) {
+  if (!fx.revOn) return 'none';
+  const near = (a, b) => Math.abs(a - b) < 1e-3;
+  return Object.keys(REVERBS).find((k) => {
+    const r = REVERBS[k];
+    return r.revOn && near(r.revMix, fx.revMix) && near(r.revSize, fx.revSize) && near(r.revTone, fx.revTone);
+  }) || '';
+}
+// set the reverb to a space; "none" only turns it off, so the last settings come back
+export function setReverbSpace(fx, key) {
+  const r = REVERBS[key];
+  if (!r) return;
+  fx.revOn = r.revOn;
+  if (r.revOn) Object.assign(fx, { revMix: r.revMix, revSize: r.revSize, revTone: r.revTone });
+}
+
 export const DELAY_TIMES = { '4': 1, '4d': 1.5, '8': 0.5, '8d': 0.75, '8t': 1 / 3, '16': 0.25 };
 
 export function emptyCols(n) {
