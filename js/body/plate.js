@@ -80,7 +80,15 @@ export function assemblePlate(grid, { wood, thickness, braces = [], patches = []
       if (tp(i, j) === 1 && within(p, grid.x(i), grid.y(j))) M[dof[j * nx + i]] += p.mass / p.count;
     }
   }
-  // braces: beams glued to one face, bending along their own direction
+  // braces: beams glued to one face. Each is a beam along its own line: its
+  // curvature is the second difference of the plate's deflection sampled on
+  // that line (bilinear between nodes), so it cannot be dodged by wrinkling
+  // the plate between nodes.
+  const gx = (x) => x / h + (nx - 1) / 2, gy = (y) => (y - grid.y(0)) / h;
+  const at = (x, y, coef) => {
+    const fx = gx(x), fy = gy(y), i = Math.floor(fx), j = Math.floor(fy), u = fx - i, v = fy - j;
+    return [[i, j, coef * (1 - u) * (1 - v)], [i + 1, j, coef * u * (1 - v)], [i, j + 1, coef * (1 - u) * v], [i + 1, j + 1, coef * u * v]];
+  };
   for (const br of braces) {
     const len = Math.hypot(br.x1 - br.x0, br.y1 - br.y0);
     const steps = Math.max(1, Math.round(len / (h / 2)));
@@ -89,16 +97,14 @@ export function assemblePlate(grid, { wood, thickness, braces = [], patches = []
     const EI = (br.wood.EL * br.b * br.hgt ** 3) / 3;
     for (let k = 0; k < steps; k++) {
       const u = (k + 0.5) / steps;
-      const { i, j } = nodeAt(grid, br.x0 + u * (br.x1 - br.x0), br.y0 + u * (br.y1 - br.y0));
+      const px = br.x0 + u * (br.x1 - br.x0), py = br.y0 + u * (br.y1 - br.y0);
+      const { i, j } = nodeAt(grid, px, py);
       if (tp(i, j) !== 1) continue;
       M[dof[j * nx + i]] += br.wood.rho * br.b * br.hgt * ds;
-      const st = [
-        ...sx(i, j).map(([a, b, v]) => [a, b, v * c * c]),
-        ...sy(i, j).map(([a, b, v]) => [a, b, v * s * s]),
-        [i + 1, j + 1, (2 * c * s) / (4 * h2)], [i + 1, j - 1, (-2 * c * s) / (4 * h2)],
-        [i - 1, j + 1, (-2 * c * s) / (4 * h2)], [i - 1, j - 1, (2 * c * s) / (4 * h2)],
-      ];
-      if (free(st)) outer(st, st, EI * ds);
+      const st = [...at(px - h * c, py - h * s, 1 / h2), ...at(px, py, -2 / h2), ...at(px + h * c, py + h * s, 1 / h2)].filter(([, , v]) => v !== 0);
+      // A feathered brace fades out before the edge: it only counts where it lies fully on
+      // the plate. A tucked brace runs into the lining and is held there (built-in end).
+      if (br.tucked ? free(st) : st.every(([a, b]) => tp(a, b) === 1)) outer(st, st, EI * ds);
     }
   }
   let bw = 0;
