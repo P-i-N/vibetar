@@ -15,15 +15,33 @@ export const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
 export const MAX_FRET = 24;
 export const MAX_BARS = 200;
-export const TECHS = ['h', 's', 'b', 'v', 'm', '>', '*'];
+
+// Technique flags of a note, kept in this order:
+//   m palm mute · h hammer-on / pull-off · s slide · b bend · v vibrato
+//   > accent · * natural harmonic (the fret is where the finger touches)
+export const FLAGS = 'mhsbv>*';
+const CONFLICTS = { h: 's', s: 'h', b: 'v', v: 'b', '*': 'mhsbv', m: '*' };
+export const normFlags = (t) => [...FLAGS].filter((c) => (t || '').includes(c)).join('');
+export const hasFlag = (cell, f) => !!cell && typeof cell.f === 'number' && (cell.t || '').includes(f);
+// add or remove one flag, dropping whatever cannot be combined with it
+export function toggleFlag(t, flag) {
+  t = t || '';
+  if (t.includes(flag)) return normFlags(t.replace(flag, ''));
+  let out = t + flag;
+  for (const c of CONFLICTS[flag] || '') out = out.replace(c, '');
+  if (flag !== '*' && flag !== '>' && flag !== 'm') out = out.replace('*', '');
+  return normFlags(out);
+}
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1 },
-  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3 },
+  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0 },
 };
-const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato'];
+const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise'];
+// number of wound strings, counted from the lowest
+const WOUND = { steel: 4, nylon: 3, twelve: 4 };
 
 export const FX_DEFAULTS = {
   revOn: true, revMix: 0.26, revSize: 2.2, revTone: 0.5,
@@ -96,7 +114,7 @@ function notesToString(song) {
 function notesFromString(str, n) {
   const cols = emptyCols(n);
   if (!str) return cols;
-  const re = /([A-F])(x|\.|\d{1,2})([hsbvm>*]?)/g;
+  const re = /([A-F])(x|\.|\d{1,2})([hsbvm>*]*)/g;
   str.split(',').forEach((tok, i) => {
     if (!tok || i >= n) return;
     let m;
@@ -105,7 +123,7 @@ function notesFromString(str, n) {
       const s = 'ABCDEF'.indexOf(m[1]);
       const f = m[2] === 'x' || m[2] === '.' ? m[2] : Math.min(MAX_FRET, parseInt(m[2], 10));
       if (!cols[i]) cols[i] = [null, null, null, null, null, null];
-      cols[i][s] = { f, t: typeof f === 'number' ? m[3] : '' };
+      cols[i][s] = { f, t: typeof f === 'number' ? normFlags(m[3]) : '' };
     }
   });
   return cols;
@@ -189,9 +207,6 @@ export async function decodeSong(str) {
 
 // ---- playback compilation ----------------------------------------------------
 
-// natural harmonics: fret -> frequency ratio of the open string
-const HARMONICS = { 12: 2, 7: 3, 19: 3, 5: 4, 24: 4, 4: 5, 9: 5, 16: 5, 3: 6 };
-
 const chordAt = (song, step) => {
   const c = song.cols[step];
   if (!c) return false;
@@ -203,10 +218,45 @@ const chordAt = (song, step) => {
 // One note event for the string engine.
 export function cellEvent(song, s, cell, t, vel, d) {
   const open = song.tuning[s] + song.capo;
-  const tech = cell.t || '';
   if (cell.f === 'x') return { type: 'n', t, s, f: midiHz(open + 5), v: vel, k: 'x', fr: true, d };
-  if (tech === '*' && HARMONICS[cell.f]) return { type: 'n', t, s, f: midiHz(open) * HARMONICS[cell.f], v: vel * 0.85, k: '*', fr: false, d };
-  return { type: 'n', t, s, f: midiHz(open + cell.f), v: vel, k: tech === '*' || tech === '>' ? '' : tech, fr: cell.f > 0, d };
+  const k = (cell.t || '').replace('>', '');
+  // natural harmonic: the open string, with a fingertip resting on it above the fret
+  if (k.includes('*') && cell.f > 0) return { type: 'n', t, s, f: midiHz(open), v: vel, k: '*', fr: false, d, hb: Math.pow(2, -cell.f / 12) };
+  return { type: 'n', t, s, f: midiHz(open + cell.f), v: vel, k: k.replace('*', ''), fr: cell.f > 0, d };
+}
+
+// How many frets apart the fretted notes of two columns lie.
+function handSpan(a, b) {
+  let lo = 99, hi = 0;
+  for (const col of [a, b]) for (const c of col || []) {
+    if (c && typeof c.f === 'number' && c.f > 0 && !(c.t || '').includes('*')) { lo = Math.min(lo, c.f); hi = Math.max(hi, c.f); }
+  }
+  return hi - lo;
+}
+
+// Does the fretting finger have to travel along string s to reach this note?
+// Returns that movement (or null): the finger lets go of the old note, and
+// with some luck - more on wound strings and long jumps - it squeaks on the way.
+function fingerTravel(song, step, s, cell, tNote, stepDur, rnd) {
+  const wound = WOUND[song.inst.preset];
+  if (!wound || typeof cell.f !== 'number' || cell.f === 0) return null;
+  if (/[hs*]/.test(cell.t || '')) return null; // legato keeps the finger down; slides are voiced by the engine
+  const maxBack = Math.min(step, Math.ceil(1.6 / stepDur));
+  for (let i = 1; i <= maxBack; i++) {
+    const prev = getCell(song, step - i, s);
+    if (!prev) continue;
+    if (typeof prev.f !== 'number' || prev.f === 0 || (prev.t || '').includes('*')) return null;
+    const dist = Math.abs(cell.f - prev.f);
+    // within a hand's span another finger takes over; beyond it the whole hand moves
+    if (dist < 1 || handSpan(song.cols[step - i], song.cols[step]) < 4) return null;
+    const dur = Math.min(Math.max(0.07, 0.045 + 0.022 * dist), 0.22, 0.4 * i * stepDur);
+    const t = Math.max(0, tNote - dur - 0.012);
+    const amount = song.inst.fingerNoise || 0;
+    const chance = Math.min(0.9, 0.3 + 0.1 * dist) * Math.min(1, 0.4 + amount) * (s < wound ? 1 : 0.35);
+    const amt = amount > 0 && rnd() < chance ? Math.min(1, 0.35 + 0.1 * dist) * (0.6 + 0.4 * rnd()) : 0;
+    return { type: 'q', t, s, dur: Math.min(dur, Math.max(0.01, tNote - t)), amt };
+  }
+  return null;
 }
 
 // Events (for the string engine) produced by one grid step starting at time t.
@@ -243,11 +293,29 @@ export function stepEvents(song, step, t, rnd) {
     if (cell.f === '.') { out.push({ type: 'o', t: tt, s }); return; }
     let vel = base * (1 + (rnd() - 0.5) * 0.3 * h);
     if (chord) vel *= (down ? 0.9 : 0.8) * (1 - 0.025 * k);
-    let tech = cell.t || '';
-    if (tech === '>') { vel = Math.min(1.15, vel * 1.3 + 0.08); tech = ''; }
-    out.push(cellEvent(song, s, { f: cell.f, t: tech }, tt, vel, down ? 1 : -1));
+    if ((cell.t || '').includes('>')) vel = Math.min(1.15, vel * 1.3 + 0.08);
+    const q = fingerTravel(song, step, s, cell, tt, stepDur, rnd);
+    if (q) out.push(q);
+    out.push(cellEvent(song, s, cell, tt, vel, down ? 1 : -1));
   });
   return out;
+}
+
+// Steps [first, last] of each palm-muted passage, for the P.M. brackets.
+// Empty columns and string stops inside a passage do not interrupt it.
+export function palmMuteRuns(song) {
+  const runs = [];
+  let start = -1, last = -1;
+  song.cols.forEach((c, i) => {
+    if (!c) return;
+    let notes = 0, pm = 0;
+    for (const cell of c) if (cell && cell.f !== '.') { notes++; if (hasFlag(cell, 'm')) pm++; }
+    if (!notes) return;
+    if (pm) { if (start < 0) start = i; last = i; }
+    else if (start >= 0) { runs.push([start, last]); start = -1; }
+  });
+  if (start >= 0) runs.push([start, last]);
+  return runs;
 }
 
 export function songEvents(song, from, to, t0, rnd) {
@@ -351,9 +419,24 @@ function aria() {
   return song;
 }
 
+function nightDrive() {
+  const song = make('Night Drive', 112, 4, 4, 5, { preset: 'steel', pickHard: 0.8, fingerNoise: 0.45 }, { revMix: 0.2, revSize: 1.6, dlyOn: true, dlyTime: '8d', dlyMix: 0.1, dlyFb: 0.25 });
+  const chug = (bar, steps, fret = 0) => { for (const st of steps) put(song, bar * 16 + st, 0, fret, 'm'); };
+  const power = (bar, st, fret) => { put(song, bar * 16 + st, 0, fret, '>'); put(song, bar * 16 + st, 1, fret + 2); put(song, bar * 16 + st, 2, fret + 2); };
+  chug(0, [0, 2, 4, 6, 8, 10]); power(0, 12, 3); chug(0, [14], 3);
+  chug(1, [0, 2, 4, 6]); power(1, 8, 5); chug(1, [10], 5); power(1, 12, 3); chug(1, [14], 3);
+  chug(2, [0, 2, 4, 6, 8, 10]); power(2, 12, 3); chug(2, [14], 3);
+  chug(3, [0, 2, 4, 6]); power(3, 8, 7); put(song, 3 * 16 + 10, 0, 5, 'm'); put(song, 3 * 16 + 12, 0, 3, 'm'); put(song, 3 * 16 + 14, 0, 2, 'mh');
+  [0, 2, 2, 1, 0, 0].forEach((f, s) => put(song, 64, s, f, s === 0 ? '>' : ''));
+  put(song, 64 + 8, 3, 12, '*'); put(song, 64 + 10, 4, 12, '*'); put(song, 64 + 12, 5, 12, '*');
+  put(song, 64 + 14, 5, 7, '*');
+  return song;
+}
+
 export const DEMOS = [
   { name: 'First Light — fingerstyle steel', make: firstLight },
   { name: 'Romance — classical nylon', make: romance },
   { name: 'Campfire — 12-string strumming', make: campfire },
+  { name: 'Night Drive — palm mutes, harmonics', make: nightDrive },
   { name: 'Slow Air — bowed strings', make: aria },
 ];

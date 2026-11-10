@@ -12,14 +12,15 @@ const el = (tag, cls, text) => {
 };
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const STORE_KEY = 'vibetar.song';
-const TECH_SYM = { h: 'h', s: '/', b: 'b', v: '~', m: 'm', '>': '>', '*': '◇' };
+// small marks next to a note; palm mutes and harmonics are drawn in their own way
+const TECH_SYM = { h: 'h', s: '/', b: 'b', v: '~', '>': '>' };
 
 const audio = new AudioEngine();
 let song = S.newSong();
 let cur = { step: 0, s: 5 };
 let anchor = null;
 let clip = null;
-let colEls = [], cellEls = [], marked = [];
+let colEls = [], cellEls = [], pmEls = [], marked = [];
 let perRow = 0;
 const undoStack = [], redoStack = [];
 
@@ -112,7 +113,7 @@ function renderSheet() {
   const avail = $('sheetWrap').clientWidth - 28 - 22 - 4;
   const cw = clamp(Math.floor((avail / Math.min(perRow, song.bars) - 2) / bar), cellWidth(), 36);
   sheet.style.setProperty('--cw', cw + 'px');
-  colEls = new Array(n); cellEls = new Array(n * 6); marked = [];
+  colEls = new Array(n); cellEls = new Array(n * 6); pmEls = new Array(n); marked = [];
   playCol = null;
   let sys = null;
   for (let b = 0; b < song.bars; b++) {
@@ -130,6 +131,7 @@ function renderSheet() {
       const step = b * bar + i;
       const c = el('div', i % song.spb === 0 ? 'col beat' : 'col');
       c.dataset.step = step;
+      c.append(pmEls[step] = el('div', 'pm'));
       for (let s = 5; s >= 0; s--) {
         const cell = el('div', 'cell');
         cell.dataset.s = s;
@@ -143,8 +145,20 @@ function renderSheet() {
     barEl.append(cols);
     sys.append(barEl);
   }
+  paintPalmMutes();
   paintCursor();
   updateStatus();
+}
+
+// P.M. brackets above the staff
+function paintPalmMutes() {
+  const cls = new Array(pmEls.length).fill('pm');
+  for (const [a, b] of S.palmMuteRuns(song)) {
+    for (let i = a; i <= b && i < cls.length; i++) cls[i] = 'pm on';
+    if (a < cls.length) cls[a] += ' start';
+    if (b < cls.length) cls[b] += a === b ? ' only' : ' end';
+  }
+  pmEls.forEach((e, i) => { if (e.className !== cls[i]) e.className = cls[i]; });
 }
 
 function paintCell(step, s) {
@@ -154,14 +168,17 @@ function paintCell(step, s) {
   e.textContent = '';
   let cls = 'cell';
   if (c) {
-    if (c.f === 'x') cls += ' x'; else if (c.f === '.') cls += ' stop';
-    e.append(el('b', '', c.f === '.' ? '▪' : String(c.f)));
-    if (c.t) e.append(el('i', '', TECH_SYM[c.t] || c.t));
+    const harm = S.hasFlag(c, '*') && c.f > 0;
+    if (c.f === 'x') cls += ' x'; else if (c.f === '.') cls += ' stop'; else if (harm) cls += ' harm';
+    e.append(el('b', '', c.f === '.' ? '▪' : harm ? `<${c.f}>` : String(c.f)));
+    const marks = [...(c.t || '')].map((f) => TECH_SYM[f] || '').join('');
+    if (marks) e.append(el('i', '', marks));
   }
   e.className = cls;
 }
 function paintSteps(a, b) {
   for (let st = Math.max(0, a); st <= Math.min(b, S.totalSteps(song) - 1); st++) for (let s = 0; s < 6; s++) paintCell(st, s);
+  paintPalmMutes();
   paintCursor();
 }
 
@@ -209,7 +226,9 @@ function updateStatus() {
   const b = Math.floor(cur.step / bar), p = cur.step % bar;
   const c = S.getCell(song, cur.step, cur.s);
   let txt = `Bar ${b + 1} · beat ${Math.floor(p / song.spb) + 1}`;
-  if (c && typeof c.f === 'number') txt += ` · ${S.noteName(song.tuning[cur.s] + song.capo + c.f)}`;
+  if (S.hasFlag(c, '*') && c.f > 0) txt += ` · harmonic at fret ${c.f}`;
+  else if (c && typeof c.f === 'number') txt += ` · ${S.noteName(song.tuning[cur.s] + song.capo + c.f)}`;
+  if (S.hasFlag(c, 'm')) txt += ' · palm muted';
   $('status').textContent = txt;
 }
 
@@ -260,8 +279,8 @@ function toggleTech(t) {
   eachSelected((st, s, c) => { if (c && typeof c.f === 'number') cells.push(c); });
   if (!cells.length) return;
   pushUndo();
-  const all = cells.every((c) => c.t === t);
-  for (const c of cells) c.t = all ? '' : t;
+  const all = cells.every((c) => c.t.includes(t));
+  for (const c of cells) if (all || !c.t.includes(t)) c.t = S.toggleFlag(c.t, t);
   const r = selRange();
   changed(r.a0, r.a1);
   if (!r.multi && !all) preview(cur.s, S.getCell(song, cur.step, cur.s));
@@ -343,8 +362,7 @@ async function preview(s, cell) {
   if (!cell || cell.f === '.' || player.playing) return;
   await audio.init();
   const t = audio.time + 0.02;
-  const tech = cell.t === 'h' || cell.t === 's' ? '' : cell.t;
-  const evs = [S.cellEvent(song, s, { f: cell.f, t: tech }, t, 0.8, 1)];
+  const evs = [S.cellEvent(song, s, { f: cell.f, t: (cell.t || '').replace(/[hs]/g, '') }, t, 0.8, 1)];
   if (song.inst.preset === 'bowed') evs.push({ type: 'o', t: t + 0.7, s });
   audio.send(evs);
 }
@@ -497,6 +515,7 @@ function buildSettings() {
   mkSlider(I, ...inst('vibrato'), 'Vibrato', 0, 2, 0.02, pct, (p) => p === 'bowed');
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
   mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, plucked);
+  mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct, plucked);
   mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms', plucked);
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
 

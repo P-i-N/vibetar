@@ -9,7 +9,10 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 ## Features
 
 - Six-string tab grid with keyboard, mouse and touch input; copy / paste, undo, bar tools
-- Techniques: hammer-on / pull-off, slide, bend, vibrato, palm mute, dead notes, accents, natural harmonics
+- Techniques: hammer-on / pull-off, slide, bend, vibrato, dead notes, accents — and they combine
+- Palm-muted passages, marked with a `P.M.` bracket above the staff
+- Natural harmonics, written `<12>`
+- Fingers you can hear: squeaks on position shifts and slides, notes that die when a finger lets go
 - Four instruments: steel-string, nylon, 12-string and bowed strings
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb and tempo-synced ping-pong delay
@@ -24,6 +27,8 @@ Nothing is sampled. Everything is computed live in an `AudioWorklet` ([js/workle
 - **Stiffness** of the wound strings is modelled with an allpass dispersion chain, so their overtones are slightly stretched.
 - **Plucking** injects an ideal-pluck velocity pulse. Its length comes from the picking position, its edges from pick hardness and pluck strength — harder plucks are brighter, not just louder.
 - **The bridge** is a passive scattering junction shared by all strings, so open strings ring in sympathy.
+- **Hands on the strings** are contact points: lossy junctions at a position along the string that absorb and reflect part of the passing wave, and can never add energy. A fingertip resting above the 12th fret leaves only the partials with a node there — a natural harmonic. The edge of the palm near the bridge gives palm muting, the fretting hand lying across the strings a dead note, and a finger letting go of a fret stops the note.
+- **Finger travel**: when the hand has to move along the neck, the finger rides the string. On wound strings that is a pulse train (one pulse per winding, so its pitch follows the finger speed) coloured by the string's longitudinal resonance; plain strings only hiss.
 - **Bowed strings** use a stick-slip friction junction between two waveguide sections.
 - **The body** is a synthesized modal impulse response ([js/ir.js](js/ir.js)): the air and top-plate resonances plus a dense, calibrated field of a few hundred higher modes, slightly different for the left and right channel.
 - **Reverb** is a synthesized impulse response too: early reflections and band-split decaying noise.
@@ -37,7 +42,9 @@ Nothing is sampled. Everything is computed live in an `AudioWorklet` ([js/workle
 | `Space` / `Enter` | Play from the cursor's bar / from the top |
 | `L` | Loop (the selection, if there is one) |
 | `H` `S` `B` `V` | Hammer-on/pull-off · slide · bend · vibrato |
-| `M` `>` `*` | Palm mute · accent · natural harmonic |
+| `M` | Palm mute (select a passage first to mute all of it) |
+| `*` | Natural harmonic: a finger touches the open string above that fret |
+| `>` | Accent |
 | `X` `.` | Dead note · stop the string |
 | `+` `-` | Shift selected frets up / down |
 | `Ctrl+C/X/V`, `Ctrl+Z` | Clipboard, undo |
@@ -51,6 +58,12 @@ python3 -m http.server 8765
 ```
 
 Then open http://localhost:8765/.
+
+The string engine and the song format have offline tests (Node 22+, no packages):
+
+```bash
+node --test test/
+```
 
 ## License
 
