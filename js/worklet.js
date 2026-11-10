@@ -136,7 +136,9 @@ function designDispersion(f, B, M, a, m, fs) {
 //            across the bending wire: both grow more slowly than the friction between the
 //            windings of a wound string or inside nylon. Fitted from 2 to 10 kHz to
 //            sigma = (R0 + R1 sqrt(f)) / (2 mu) + pi f (2.0e-4 + 4 pi² mu E I d f² / T²)
-//            (air, thermoelastic and viscoelastic loss of a 0.3 mm steel wire)
+//            (air, thermoelastic and viscoelastic loss of a 0.3 mm steel wire). The winding of
+//            a new bronze-wound string takes about the same share of the energy in every
+//            cycle, not a share that keeps growing: a Q near 3000 from 4 kHz up (an estimate).
 //   B        inharmonicity of the open string: partials at k f sqrt((1 + B k²) / (1 + B)).
 //            B = π³ E d⁴ / (64 T L²) with the diameter d of the string, of the core for a wound one
 //   tm       how far (cents) an mf pluck of the open string starts sharp: the plucked string is
@@ -153,14 +155,14 @@ function designDispersion(f, B, M, a, m, fs) {
 const PRESETS = {
   steel: {
     b1: [0.50, 0.55, 0.62, 0.72, 0.80, 0.90],
-    b3: [4.6e-7, 4.3e-7, 4.0e-7, 3.8e-7, 2.6e-7, 2.4e-7],
+    b3: [3.7e-7, 3.4e-7, 3.2e-7, 3.0e-7, 2.2e-7, 2.0e-7],
     B: [8.3e-5, 4.6e-5, 2.7e-5, 1.1e-5, 6.0e-5, 1.9e-5],
     tm: [4.1, 2.0, 1.1, 0.5, 0.95, 0.34],
     fL: [16.4, 13.6, 12.0, 9.6, 15.8, 11.8],
     phantom: [-24, -29, -32, -38, -31, -38],
     tmE: [70.9, 73.1, 45.3, 26.5, 17.4, 9.87],
     phCal: [12.4, 9.88, 9.04, 12, 23.8, 15.4],
-    flat: [0, 0, 0, 0, 8000, 8000],
+    flat: [6000, 6000, 6000, 6000, 8000, 8000],
     gain: [1.0, 1.0, 0.98, 0.94, 0.9, 0.86],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     // the strings' own loss per string when tied to the modelled bridge, trimmed so that the
@@ -188,7 +190,7 @@ const PRESETS = {
     phantom: [-25, -30, -33, -39, -32, -39],
     tmE: [55.6, 66, 37.7, 31.1, 17.9, 11],
     phCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
-    flat: [0, 0, 0, 0, 8000, 8000],
+    flat: [6000, 6000, 6000, 6000, 8000, 8000],
     gain: [0.8, 0.8, 0.78, 0.76, 0.7, 0.66],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     tied: [1, 1, 1, 0.55, 1.6, 1.15],

@@ -6,7 +6,7 @@ import { coupleBody, plateConductance } from './couple.js';
 import { micTransfer } from './radiate.js';
 import { fft, denseField, bodyTarget } from '../ir.js';
 
-export const MODEL_VERSION = 4;
+export const MODEL_VERSION = 5;
 export const BRIDGE_MODES = 24;      // resonances that also run inside the string engine
 const LENGTH = 0.42;                 // seconds of impulse response
 const XFADE = [3000, 5000];          // modelled range fades out, statistical field fades in

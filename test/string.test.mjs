@@ -116,21 +116,21 @@ function decayRate(x, f, t = 0.05, dt = 0.2) {
   return Math.log(a.mag / b.mag) / dt;
 }
 
-test('plain steel strings keep their highs: the loss stops growing with the square of the frequency', () => {
+test('steel strings keep their highs: the loss stops growing with the square of the frequency', () => {
   const pr = PRESETS.steel;
-  for (const s of [4, 5]) {
+  for (let s = 0; s < 6; s++) {
     // the towards-top motion alone: the two directions of motion beat against each other
     const f0 = midiHz(OPEN[s]), x = without('tm', () => channels(s, 0.8, 0.5)[s >> 1]);
     // a rigid bridge: 1.45 x the string's broadband loss (see setDamping)
     const law = (f) => 1.45 * pr.b1[s] + (pr.b3[s] * f * f) / (1 + (f / pr.flat[s]) ** 2);
-    for (const k of [6, 26]) {
-      const f = k * f0 * Math.sqrt((1 + pr.B[s] * k * k) / (1 + pr.B[s]));
-      const rate = decayRate(x, f), want = law(f);
-      assert.ok(rate > 0.6 * want && rate < 1.35 * want, `string ${s} partial ${k} (${f.toFixed(0)} Hz): ${rate.toFixed(1)} /s, law ${want.toFixed(1)} /s`);
+    // a low partial, and the partial nearest to a frequency where the square law would be far off
+    for (const near of [6 * f0, s < 4 ? 5000 : 6500]) {
+      const a = freqNear(x, near, 0.05, 0.1, (0.5 * f0) / near), b = freqNear(x, a.f, 0.25, 0.1, 0.003);
+      const rate = Math.log(a.mag / b.mag) / 0.2, want = law(a.f), square = 1.45 * pr.b1[s] + pr.b3[s] * a.f * a.f;
+      assert.ok(rate > 0.6 * want && rate < 1.35 * want, `string ${s} at ${a.f.toFixed(0)} Hz: ${rate.toFixed(1)} /s, law ${want.toFixed(1)} /s`);
+      if (near > 4000) assert.ok(rate < 0.8 * square, `string ${s} at ${a.f.toFixed(0)} Hz: ${rate.toFixed(1)} /s, square law ${square.toFixed(1)} /s`);
     }
   }
-  // the wound strings follow the square law
-  assert.ok(pr.flat.slice(0, 4).every((fc) => !fc));
 });
 
 test('tuning a note takes little from its highs: nearby pitches keep them equally long', () => {
