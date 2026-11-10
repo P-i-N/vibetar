@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { barreOf, planHand, handPath } from '../js/hand.js';
+import { barreOf, fingering, planHand, handPath } from '../js/hand.js';
 import { DEMOS } from '../js/demos.js';
 import * as S from '../js/song.js';
 
@@ -81,4 +81,16 @@ test('the hand path keeps one position through a scale and moves for a jump', ()
   assert.ok(ps[4] >= 6 && ps[5] >= 8);
   // a shape wider than a hand still gets a position
   assert.equal(handPath([{ step: 0, options: [{ lo: 1, hi: 9, cost: 0 }] }], 0.2)[0].p, 1);
+});
+
+test('every fretted note has a finger: one per fret from the hand position, the barre is the index', () => {
+  const of = (frets, pos) => { const n = shapeNotes(frets); return Object.fromEntries(fingering(n, pos, barreOf(n))); };
+  assert.deepEqual(of([-1, 3, 2, 0, 1, 0], 1), { 1: 3, 2: 2, 4: 1 });               // open C
+  assert.deepEqual(of([3, 2, 0, 0, 0, 3], 1), { 0: 3, 1: 2, 5: 4 });                // open G
+  assert.deepEqual(of([0, 2, 2, 1, 0, 0], 1), { 3: 1, 1: 2, 2: 3 });                // open E: two fingers in one fret
+  assert.deepEqual(of([1, 3, 3, 2, 1, 1], 1), { 0: 1, 4: 1, 5: 1, 3: 2, 1: 3, 2: 4 }); // F barre
+  // the plan gives the fingers of the notes of each column
+  const p = plan(cols(8, [[0, 4, 5], [1, 4, 7], [2, 4, 8], [3, 5, 5]]));
+  assert.deepEqual([p[0].fingers[4], p[1].fingers[4], p[2].fingers[4]], [1, 3, 4]);
+  assert.equal(p[0].fingers.filter(Boolean).length, 1);
 });

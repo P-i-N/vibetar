@@ -9,8 +9,9 @@ const STRETCH = 4; // one more with a stretch
 // The cheapest path of the hand through steps that each offer fingerings
 // (layers: [{ step, options: [{ lo, hi, cost }] }], lo/hi the lowest and highest fretted
 // fret, lo 0 when nothing is fretted). The hand sits at a position p (index finger at fret
-// p); moving it costs, the more the further, less after a long rest. Open strings leave it
-// where it is. j is the chosen option, p the position.
+// p); moving it costs, the more the further, less after a long rest. Where it has the
+// choice, the index finger takes the lowest fret. Open strings leave the hand where it is.
+// j is the chosen option, p the position.
 export function handPath(layers, stepSecs) {
   const states = [], cost = [], from = [];
   layers.forEach((l, i) => {
@@ -23,7 +24,7 @@ export function handPath(layers, stepSecs) {
       }
       const first = Math.max(1, o.hi - STRETCH);
       if (first > o.lo) { st.push({ j, p: o.lo, c: o.cost + 3 }); return; } // wider than a hand: played anyway
-      for (let p = first; p <= o.lo; p++) st.push({ j, p, c: o.cost + 0.02 * p + (o.hi - p > REACH ? 2 : 0) });
+      for (let p = first; p <= o.lo; p++) st.push({ j, p, c: o.cost + 0.02 * (o.lo - p) + (o.hi - p > REACH ? 2 : 0) });
     });
     states.push(st);
     if (!i) { cost.push(st.map((s) => s.c)); from.push(st.map(() => -1)); return; }
@@ -70,6 +71,22 @@ export function barreOf(notes, open = []) {
   return { f, lo, hi };
 }
 
+// Which finger (1 index .. 4 little finger) stops each of the notes ([string, fret]) a hand at
+// position p holds: string -> finger. One finger per fret, counted from the index finger at
+// fret p; notes at one fret take neighbouring fingers, the lower string first; the notes of
+// a barre all take the index finger.
+export function fingering(notes, p, barre) {
+  const out = new Map();
+  let next = barre ? 2 : 1;
+  for (const [s, f] of [...notes].sort((a, b) => a[1] - b[1] || a[0] - b[0])) {
+    if (barre && f === barre.f && s >= barre.lo && s <= barre.hi) { out.set(s, 1); continue; }
+    const finger = Math.min(4, Math.max(next, f - p + 1));
+    out.set(s, finger);
+    next = finger + 1;
+  }
+  return out;
+}
+
 // can one hand at position p hold all these notes ([string, fret]) at once?
 function holdable(notes, p, open) {
   if (notes.some(([, f]) => f < p || f > p + STRETCH)) return false;
@@ -114,7 +131,9 @@ function soloSteps(cols, steps, open, beat) {
 //   regrip    strings newly fretted after a long pause or at a section start (no move)
 //   mutes     strings a single-note line silences as this note is played
 //   barre     strings of this column's notes that the index finger holds as a barre
-//   gap       seconds since the previous column with notes
+//   fingers   per string, the finger (1 index .. 4 little finger) that stops this column's
+//             note on it; 0 for an open string or no note
+//   gap      seconds since the previous column with notes
 //   phrase    the column starts a section: after a long pause, or on every eighth bar
 // }
 export function planHand(cols, { stepSecs, spb, bar, open }) {
@@ -136,7 +155,7 @@ export function planHand(cols, { stepSecs, spb, bar, open }) {
   for (const i of steps) {
     const col = cols[i];
     const gap = last < 0 ? Infinity : (i - last) * stepSecs;
-    const e = { pos: 0, lifts: [], move: null, regrip: null, mutes: [], barre: [], gap, phrase: false };
+    const e = { pos: 0, lifts: [], move: null, regrip: null, mutes: [], barre: [], fingers: [0, 0, 0, 0, 0, 0], gap, phrase: false };
     e.phrase = (last >= 0 && i - last >= 2 * spb) || (i % bar === 0 && (i / bar) % 8 === 0 && i > 0);
     plan[i] = e;
     const notes = [];
@@ -178,6 +197,10 @@ export function planHand(cols, { stepSecs, spb, bar, open }) {
     // earlier under it were barred too
     barre = barreOf([...held].filter(([, h]) => h.step > i - bar).map(([s, h]) => [s, h.f]), [...ringOpen]);
     if (barre) for (const [s, h] of held) if (h.step > i - bar && h.f === barre.f && s >= barre.lo && s <= barre.hi && !plan[h.step].barre.includes(s)) plan[h.step].barre.push(s);
+    if (fr.length) {
+      const fingers = fingering([...held].map(([s, h]) => [s, h.f]), pos, barre);
+      for (const n of fr) e.fingers[n.s] = fingers.get(n.s) || 0;
+    }
     // a single-note line keeps one string sounding
     if (solo.has(i)) {
       const s = sounding[0].s;

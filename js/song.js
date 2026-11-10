@@ -36,12 +36,15 @@ export function toggleFlag(t, flag) {
 }
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, strum: 14, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.4 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, strum: 18, human: 0.5, fingerNoise: 0.25, picking: 2, coupling: 0.3 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, strum: 16, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.3 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, strum: 14, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.4, humanOn: 1 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, strum: 18, human: 0.5, fingerNoise: 0.25, picking: 2, coupling: 0.3, humanOn: 1 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, strum: 16, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.3, humanOn: 1 },
 };
 // Order of the settings in a link. A retired setting keeps its place (null), so old links still load.
-const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', null, 'strum', 'human', null, 'fingerNoise', 'picking', null, 'coupling'];
+const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', null, 'strum', 'human', null, 'fingerNoise', 'picking', null, 'coupling', 'humanOn'];
+// How much of the performer's feel is played: `human` is the amount, `humanOn` (1 or 0) the
+// switch next to the tempo. Switched off, the song is played exactly as written.
+export const humanOf = (inst) => (inst.humanOn === 0 ? 0 : inst.human);
 // picking techniques, by inst.picking
 export const PICKING = ['pick', 'flesh', 'nailS', 'nailL', 'hybrid'];
 // number of wound strings, counted from the lowest
@@ -268,6 +271,9 @@ function handPlan(song, perf) {
   return perf.hand;
 }
 
+// the fretting hand's plan for the whole song, for showing it
+export const planSong = (song) => handPlan(song, { hand: null });
+
 // events for plan entry e; tNote: when the column's first note sounds; h: humanize
 function handEvents(song, e, tNote, rnd, h) {
   const out = [];
@@ -311,6 +317,13 @@ function handEvents(song, e, tNote, rnd, h) {
 // What a player carries from note to note: which finger or pick direction came
 // last, and a slow drift in timing, loudness and plucking point. Unlike
 // independent jitter, drift keeps neighbouring notes together.
+// On top of the drift the performer shapes the music (all of it scaled by Humanize):
+//   * a phrase of four bars breathes: it moves on a little towards its middle and eases
+//     off towards its end, and is loudest past its middle
+//   * the song slows down and softens into its last note, unless it is looped
+//   * of notes plucked together the top one, the melody, is brought out
+//   * a note that needs a long, quick shift of the fretting hand comes a little late
+//   * no string is exactly in tune, and a fretting finger pulls its note a little sharp
 
 function mulberry32(a) {
   return function () {
@@ -323,23 +336,81 @@ function mulberry32(a) {
 const clampTo = (x, lim) => Math.max(-lim, Math.min(lim, x));
 
 export function newPerformer(seed) {
+  const rnd = seed == null ? Math.random : mulberry32(seed);
   return {
-    rnd: seed == null ? Math.random : mulberry32(seed),
+    rnd,
     drift: { t: 0, v: 0, p: 0 },                       // seconds, relative loudness, millimetres
-    last: { finger: 0, fingerT: [-9, -9, -9, -9, -9], pickT: -9, pickD: 1 },
+    // the last finger on a treble string and that string; when and in which column each finger last played
+    last: { finger: 0, string: -1, fingerT: [-9, -9, -9, -9, -9], fingerStep: [-1, -1, -1, -1, -1], pickT: -9, pickD: 1 },
+    tune: [0, 0, 0, 0, 0, 0].map(() => 2 * rnd() - 1), // how far each string is from its pitch, -1 .. 1
     hand: null,                                        // the fretting hand's plan (hand.js), made on first use
+    end: null,                                         // the last column with notes, found on first use
+    loop: false,                                       // the song is played round and round: no slowing at its end
   };
 }
 
-const FINGER_STRENGTH = [1.0, 1.0, 0.97, 0.9, 1.0]; // thumb, index, middle, ring, pick
-const PULL = 0.08;                                   // how strongly the drift returns to the beat
+const FINGER_STRENGTH = [1.0, 1.0, 0.97, 0.93, 1.0]; // thumb, index, middle, ring, pick
+// a hammer-on or pull-off is as strong as the fretting finger that plays it: none, index .. little finger
+const FRET_STRENGTH = [1, 1, 1, 0.94, 0.85];
+const PULL_T = 0.05, PULL = 0.08;                     // how strongly the drift returns: timing; loudness and plucking point
+const TIMING = 0.011, LOUDNESS = 0.1;                 // spread (standard deviation) of the drift at Humanize 100 %
+const JITTER_T = 0.008, JITTER_V = 0.2;               // note-to-note scatter (full width) in seconds and relative loudness
+const PHRASE_BARS = 4;
+const BREATH = 0.004;                                 // a phrase runs ahead of the beat by up to this share of its length
+const ARC = 0.12;                                     // and swells by this much
+const RITARD = 0.07, SOFTEN = 0.15;                   // the last bar is late by up to this share of a bar, and softer
+const DETUNE = 1.5;                                   // cents a string may be off
+const TOP_VOICE = 0.08, INNER_VOICE = 0.05;
 
 function driftStep(perf, rnd) {
   const g = () => (rnd() + rnd() + rnd() - 1.5) * 2; // roughly standard normal
-  const d = perf.drift;
-  d.t = clampTo(d.t * (1 - PULL) + 0.0012 * g(), 0.007);
-  d.v = clampTo(d.v * (1 - PULL) + 0.02 * g(), 0.12);
+  const d = perf.drift, spread = (sd, pull) => sd * Math.sqrt(1 - (1 - pull) ** 2);
+  d.t = clampTo(d.t * (1 - PULL_T) + spread(TIMING, PULL_T) * g(), 0.025);
+  d.v = clampTo(d.v * (1 - PULL) + spread(LOUDNESS, PULL) * g(), 0.22);
   d.p = clampTo(d.p * (1 - PULL) + 0.6 * g(), 4);
+}
+
+// the last column with anything in it, found once per performance
+function songEnd(song, perf) {
+  if (perf.end == null) {
+    perf.end = -1;
+    for (let i = song.cols.length - 1; i >= 0; i--) if (song.cols[i]) { perf.end = i; break; }
+  }
+  return perf.end;
+}
+
+// The finger of the plucking hand for a single treble note (1 index, 2 middle, 3 ring). Each
+// string has its own, as in an arpeggio: index on G, middle on B, ring on the top string. No
+// finger plays twice in a row in a quick line: along one string index and middle alternate.
+function trebleFinger(s, t, last) {
+  const home = s - 2;
+  if (!last.finger || t - last.fingerT[last.finger] > 0.4) return home;
+  if (last.string === s) return last.finger === 1 ? 2 : 1;
+  if (home !== last.finger) return home;
+  return s > last.string ? (home < 3 ? home + 1 : 2) : (home > 1 ? home - 1 : 2);
+}
+
+// the fret of the note before `step` on string s and the column it is in, or null
+function noteBefore(song, step, s) {
+  for (let i = step - 1; i >= 0; i--) {
+    const c = getCell(song, i, s);
+    if (c) return typeof c.f === 'number' && !(c.t || '').includes('*') ? { f: c.f, step: i } : null;
+  }
+  return null;
+}
+
+// what plucks the string (the engine's plucker): the finger, and the picking technique
+const pluckerOf = (finger, technique) => (finger === 4 ? 0 : finger === 0 && technique !== 4 ? 4 : technique === 4 ? 2 : technique);
+// does this string get a finger (true) or the pick?
+const fingered = (technique, s) => (technique >= 1 && technique <= 3) || (technique === 4 && s >= 3);
+
+// One note on its own, as the editor plays it when it is entered.
+export function previewEvent(song, s, cell, t) {
+  const ev = cellEvent(song, s, cell, t, 0.8, 1);
+  const technique = song.inst.picking || 0;
+  ev.fi = !fingered(technique, s) ? 4 : s < 3 ? 0 : s - 2;
+  ev.fg = pluckerOf(ev.fi, technique);
+  return ev;
 }
 
 // seconds since the previous note on string s, if it is close enough to matter to the stroke
@@ -375,7 +446,7 @@ export function stepEvents(song, step, t, rnd, perf) {
   for (let s = 0; s < 6; s++) if (col[s]) strings.push(s);
   if (!strings.length) return [];
   if (!perf) perf = newPerformer();
-  const plan = handPlan(song, perf)[step];
+  const hand = handPlan(song, perf), plan = hand[step];
   const { spb, inst } = song;
   const bar = spb * song.bpb;
   const stepDur = 60 / song.bpm / spb;
@@ -393,52 +464,76 @@ export function stepEvents(song, step, t, rnd, perf) {
     }
   }
   const base = pos === 0 ? 0.92 : inBeat === 0 ? 0.82 : 0.72;
-  const h = inst.human;
+  const h = humanOf(inst);
   driftStep(perf, rnd);
-  let spread = strings.length > 1 ? inst.strum / 1000 : 0;
+  let spread = strings.length > 1 ? (inst.strum / 1000) * (1 + 0.4 * h * (rnd() - 0.5)) : 0;
   if (spread * (strings.length - 1) > 0.7 * stepDur) spread = (0.7 * stepDur) / (strings.length - 1);
   if (!down) { strings.reverse(); spread *= 0.8; }
   const sounding = strings.filter((s) => col[s].f !== '.');
+  const top = Math.max(...sounding);
+  // where the column is in its phrase (0 .. 1) and in the last bar before the end (0 .. 1)
+  const phrase = PHRASE_BARS * bar, u = (step % phrase) / phrase;
+  const end = songEnd(song, perf), last1 = perf.loop || end < 2 * bar ? 0 : Math.min(1, Math.max(0, (step - end + bar) / bar));
+  let lag = perf.drift.t - BREATH * phrase * stepDur * Math.sin(Math.PI * u) + RITARD * bar * stepDur * last1 * last1;
+  // the fretting hand needs its time for a long shift
+  const shift = plan && plan.move && plan.gap < 0.35 ? plan.move.dist : 0;
+  if (shift >= 3) lag += Math.min(0.012, 0.0015 * shift) * (0.5 + rnd());
+  const swell = perf.drift.v + ARC * (Math.sin(Math.PI * u) - 2 / Math.PI) - SOFTEN * last1 - (shift >= 3 ? 0.04 : 0);
   // a pick playing single notes in a run alternates; on the beat it comes down
   if (technique === 0 && sounding.length === 1 && !chord) {
     down = inBeat === 0 || t - last.pickT > 0.35 ? true : last.pickD < 0;
     last.pickT = t; last.pickD = down ? 1 : -1;
   }
-  const jitter = h * (perf.drift.t + (rnd() - 0.5) * 0.002);
+  const jitter = h * lag;
   const out = [];
   strings.forEach((s, k) => {
     const cell = col[s];
-    const tt = Math.max(0, t + jitter + k * spread * (1 + (rnd() - 0.5) * 0.5 * h));
+    const tt = Math.max(0, t + jitter + h * (rnd() - 0.5) * JITTER_T + k * spread * (1 + (rnd() - 0.5) * 0.5 * h));
     if (cell.f === '.') { out.push({ type: 'o', t: tt, s }); return; }
-    let vel = base * (1 + h * (perf.drift.v + (rnd() - 0.5) * 0.06));
+    let vel = base * (1 + h * (swell + (rnd() - 0.5) * JITTER_V));
     if (chord) vel *= (down ? 0.9 : 0.8) * (1 - 0.025 * k);
     else if (!down) vel *= 0.93;
+    if (sounding.length > 1) vel *= s === top ? 1 + TOP_VOICE * h : chord ? 1 : 1 - INNER_VOICE * h;
     const accent = (cell.t || '').includes('>');
     if (accent) vel = Math.min(1.15, vel * 1.3 + 0.08);
     const ev = cellEvent(song, s, cell, tt, vel, down ? 1 : -1);
     if (plan && plan.barre.includes(s)) ev.br = true; // stopped by the flat index finger
     // who plays it: 0 thumb, 1 index, 2 middle, 3 ring, 4 the pick
     let finger = 4;
-    const fingers = technique >= 1 && technique <= 3 ? true : technique === 4 && s >= 3;
-    if (fingers) {
+    if (fingered(technique, s)) {
       if (s < 3) finger = 0;
       else if (sounding.filter((x) => x >= 3).length > 1) finger = s - 2;       // one finger per string
-      else finger = last.finger === 1 ? 2 : 1;                                   // alternate
-      if (finger) last.finger = finger;
+      else finger = trebleFinger(s, tt, last);
+      if (finger) { last.finger = finger; last.string = s; }
     }
     ev.fi = finger;
-    ev.fg = finger === 4 ? 0 : finger === 0 && technique !== 4 ? 4 : technique === 4 ? 2 : technique;
-    ev.v *= FINGER_STRENGTH[finger] * (finger !== 4 && tt - last.fingerT[finger] < 0.12 ? 0.9 : 1);
-    last.fingerT[finger] = tt;
+    ev.fg = pluckerOf(finger, technique);
+    // a finger that has just played is weaker; the thumb brushing over several strings is one stroke
+    const again = finger !== 4 && last.fingerStep[finger] !== step && tt - last.fingerT[finger] < 0.12;
+    ev.v *= FINGER_STRENGTH[finger] * (again ? 0.9 : 1);
+    last.fingerT[finger] = tt; last.fingerStep[finger] = step;
+    // the fretting finger: it also plays the hammer-on (its own note) or the pull-off (the note it leaves)
+    const ff = plan ? plan.fingers[s] : 0;
+    if (ff) ev.ff = ff;
+    if (ev.k.includes('h')) {
+      const before = noteBefore(song, step, s);
+      const pull = before && before.f > cell.f && hand[before.step];
+      ev.v *= FRET_STRENGTH[pull ? pull.fingers[s] : ff];
+    }
     if (accent) ev.rs = true;
     if (h > 0) ev.pp = Math.round(h * perf.drift.p * 100) / 100;
+    // no string is exactly in tune; a finger pressing a string down stretches it a little
+    let cents = 0;
+    if (h > 0 && ev.k !== 'x') cents = h * (DETUNE * perf.tune[s] + (ev.fr ? 0.6 + 1.2 * rnd() + (accent ? 0.8 : 0) : 0));
+    const sharp = Math.pow(2, cents / 1200);
+    ev.f *= sharp;
     const gap = gapBefore(song, step, s, stepDur);
     if (gap) ev.gap = gap;
     const from = ev.k.includes('s') ? slideRestart(song, step, s, stepDur) : null;
     if (from != null && from !== cell.f) {
       // pluck the old note, then slide so that the new one arrives on time (as long as the engine's glide)
       const glide = Math.min(0.3, Math.max(0.07, 0.035 * Math.abs(cell.f - from)));
-      const pre = { ...ev, t: Math.max(0, ev.t - glide - GRACE), f: midiHz(song.tuning[s] + song.capo + from), k: ev.k.replace(/[sbv]/g, ''), fr: from > 0 };
+      const pre = { ...ev, t: Math.max(0, ev.t - glide - GRACE), f: midiHz(song.tuning[s] + song.capo + from) * sharp, k: ev.k.replace(/[sbv]/g, ''), fr: from > 0 };
       delete pre.gap;
       ev.t = pre.t + GRACE;
       out.push(pre);
