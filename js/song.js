@@ -34,12 +34,12 @@ export function toggleFlag(t, flag) {
 }
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 1, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 1, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25, picking: 2, bodyModel: 1 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 1, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1 },
-  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0, picking: 0, bodyModel: 0 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.4 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25, picking: 2, bodyModel: 1, coupling: 0.3 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.3 },
+  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0, picking: 0, bodyModel: 0, coupling: 1 },
 };
-const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise', 'picking', 'bodyModel'];
+const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise', 'picking', 'bodyModel', 'coupling'];
 // picking techniques, by inst.picking
 export const PICKING = ['pick', 'flesh', 'nailS', 'nailL', 'hybrid'];
 // number of wound strings, counted from the lowest

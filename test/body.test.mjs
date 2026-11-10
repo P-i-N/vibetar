@@ -186,7 +186,7 @@ test('the body builds within the time budget and reports its resonances', () => 
   assert.ok(b.info.ms < 8000, `built in ${b.info.ms} ms`);
   assert.equal(b.version, MODEL_VERSION);
   assert.ok(b.info.air > 90 && b.info.air < 110 && b.info.top > 170 && b.info.top < 215);
-  assert.equal(b.irs.length, 8);
+  assert.equal(b.irs.length, 12);
   assert.equal(b.bridge.K, 24);
   assert.equal(b.bridge.phi.length, 6 * 24);
   assert.ok(b.bridge.gRes > 0 && b.bridge.z.length === 6);
@@ -272,7 +272,7 @@ test('44.1 kHz and 96 kHz bodies have the same resonances', () => {
 test('building the body twice gives identical responses', async () => {
   const { buildBody } = await import('../js/body/model.js');
   const a = cachedBody('nylon'), b = buildBody('nylon', FS);
-  for (let c = 0; c < 8; c++) assert.deepEqual(a.irs[c], b.irs[c]);
+  for (let c = 0; c < 12; c++) assert.deepEqual(a.irs[c], b.irs[c]);
   assert.deepEqual([...a.bridge.phi], [...b.bridge.phi]);
 });
 
@@ -285,12 +285,15 @@ test('a cached body is only used if it matches version, instrument and sample ra
   assert.ok(!validBody(good, 'nylon', FS));
   assert.ok(!validBody(good, 'steel', 44100));
   assert.ok(!validBody({ ...good, version: MODEL_VERSION - 1 }, 'steel', FS));
-  assert.ok(!validBody({ ...good, irs: good.irs.slice(0, 7) }, 'steel', FS));
+  assert.ok(!validBody({ ...good, irs: good.irs.slice(0, 11) }, 'steel', FS));
   assert.ok(!validBody({ ...good, irs: good.irs.map((h, i) => (i === 3 ? h.subarray(0, 100) : h)) }, 'steel', FS));
   const bad = good.irs.map((h) => h.slice());
   bad[5].fill(NaN, 1000, 20000);
   assert.ok(!validBody({ ...good, irs: bad }, 'steel', FS));
   assert.ok(!validBody({ ...good, bridge: null }, 'steel', FS));
+  // a record whose bridge data is incomplete would break the string engine: never usable
+  for (const key of ['f', 'eta', 'phi', 'rock', 'z', 'gRes']) assert.ok(!validBody({ ...good, bridge: { ...good.bridge, [key]: undefined } }, 'steel', FS), `bridge.${key} missing`);
+  assert.ok(!validBody({ ...good, bridge: { ...good.bridge, eta: good.bridge.eta.slice(0, 5) } }, 'steel', FS));
   assert.ok(!validBody(null, 'steel', FS) && !validBody('junk', 'steel', FS) && !validBody({}, 'steel', FS));
   assert.notEqual(cacheKey('steel', 48000), cacheKey('steel', 44100));
   assert.ok(cacheKey('steel', 48000).includes(String(MODEL_VERSION)));

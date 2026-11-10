@@ -6,7 +6,7 @@ import { coupleBody, plateConductance } from './couple.js';
 import { micTransfer } from './radiate.js';
 import { fft, denseField, bodyTarget } from '../ir.js';
 
-export const MODEL_VERSION = 2;
+export const MODEL_VERSION = 3;
 export const BRIDGE_MODES = 24;      // resonances that also run inside the string engine
 const LENGTH = 0.42;                 // seconds of impulse response
 const XFADE = [3000, 5000];          // modelled range fades out, statistical field fades in
@@ -15,7 +15,9 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 // buildBody(name, fs) -> {
 //   version, name, fs,
-//   irs: 8 Float32Arrays - zone bass L, R; middle L, R; treble L, R; rock L, R,
+//   irs: 12 Float32Arrays, left and right microphone for each of: force towards the top on the
+//        bass / middle / treble part of the bridge, then force along the top (which rocks the
+//        bridge) on the same three parts,
 //   bridge: { K, f, eta, phi[6 x K], rock[6 x K], z[6], gRes },
 //   info: { air, top, modes, ms } }
 export function buildBody(name, fs) {
@@ -35,9 +37,13 @@ export function buildBody(name, fs) {
     for (let k = 0; k < K; k++) d[k] = 0.5 * (body.phi[pair[0] * K + k] + body.phi[pair[1] * K + k]);
     return d;
   });
-  const rock = new Float64Array(K);
-  for (let k = 0; k < K; k++) { let s = 0; for (let i = 0; i < 6; i++) s += body.rock[i * K + k]; rock[k] = s / 6; }
-  drives.push(rock);
+  // rocking, per part of the bridge: the two sides tilt it in opposite senses for the
+  // main (symmetric) resonances, so one average over all strings would cancel them
+  for (const pair of [[0, 1], [2, 3], [4, 5]]) {
+    const d = new Float64Array(K);
+    for (let k = 0; k < K; k++) d[k] = 0.5 * (body.rock[pair[0] * K + k] + body.rock[pair[1] * K + k]);
+    drives.push(d);
+  }
   const spectra = micTransfer(body, inst, drives, fs, nfft); // [mic][drive]
 
   const bin = (f) => Math.round((f * nfft) / fs);

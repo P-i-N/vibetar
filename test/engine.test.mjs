@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note } from './util.mjs';
+import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody } from './util.mjs';
 
 const N = 1 << 16;
 
@@ -142,23 +142,43 @@ test('combined techniques and a storm of events stay bounded', () => {
   }
 });
 
-test('the engine renders four channels that add up to the mono output', () => {
+test('the engine renders six channels that add up to the mono output', () => {
   const play = (e) => {
     [[0, 3], [2, 2], [3, 0], [5, 3]].forEach(([s, fret], i) => e.post({ type: 'n', t: 0.02 + i * 0.01, s, f: midiHz(OPEN[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1 }));
   };
   const a = engine(), b = engine();
   play(a); play(b);
   const mono = render(a, 0.5);
-  const n = mono.length, ch = [0, 1, 2, 3].map(() => new Float32Array(n));
+  const n = mono.length, ch = [0, 1, 2, 3, 4, 5].map(() => new Float32Array(n));
   for (let i = 0; i < n; i += 128) b.render(ch.map((c) => c.subarray(i, i + 128)), 128, i);
   const mixH = 0.6; // steel
-  for (let i = 0; i < n; i += 97) assert.ok(Math.abs(mono[i] - (ch[0][i] + ch[1][i] + ch[2][i] + mixH * ch[3][i])) < 1e-5, `sample ${i}`);
-  // strings 0 and 5 were played: bass and treble zones carry signal, and so does the along-top channel
-  for (const c of [0, 1, 2, 3]) assert.ok(peak(ch[c]) > 0.01, `channel ${c} is silent`);
+  for (let i = 0; i < n; i += 97) assert.ok(Math.abs(mono[i] - (ch[0][i] + ch[1][i] + ch[2][i] + mixH * (ch[3][i] + ch[4][i] + ch[5][i]))) < 1e-5, `sample ${i}`);
+  // strings from every part of the bridge were played: all six channels carry signal
+  for (const c of [0, 1, 2, 3, 4, 5]) assert.ok(peak(ch[c]) > 0.01, `channel ${c} is silent`);
   // only string 2-3 notes land in the middle zone
   const e = engine();
   e.post({ type: 'n', t: 0.02, s: 0, f: midiHz(43), v: 0.8, k: '', fr: true, d: 1 });
-  const one = [0, 1, 2, 3].map(() => new Float32Array(4096));
+  const one = [0, 1, 2, 3, 4, 5].map(() => new Float32Array(4096));
   for (let i = 0; i < 4096; i += 128) e.render(one.map((c) => c.subarray(i, i + 128)), 128, i);
   assert.ok(peak(one[0]) > 0.05 && peak(one[1]) < 1e-3 && peak(one[2]) < 1e-3);
+  assert.ok(peak(one[3]) > 0.01 && peak(one[4]) < 1e-3 && peak(one[5]) < 1e-3);
+});
+
+test('changing a setting while playing does not let stopped strings and dead notes ring again', () => {
+  for (const bridged of [false, true]) {
+    const run = (cfgAt) => {
+      const e = engine(bridged ? { bridge: cachedBody('steel').bridge, coupling: 0.4 } : {});
+      e.post({ type: 'n', t: 0.01, s: 1, f: midiHz(45), v: 0.9, k: '', fr: false, d: 1 });
+      e.post({ type: 'o', t: 0.3, s: 1 });
+      e.post({ type: 'n', t: 0.31, s: 3, f: midiHz(60), v: 0.9, k: 'x', fr: true, d: 1 });
+      const out = new Float32Array(Math.floor((0.9 * FS) / 128) * 128);
+      for (let i = 0; i < out.length; i += 128) {
+        // what the app sends on every slider move
+        if (cfgAt != null && i === Math.floor((cfgAt * FS) / 128) * 128) e.configure({ preset: 'steel', open: OPEN, sustain: 0.1, bright: 0.1, ...(bridged ? { bridge: cachedBody('steel').bridge, coupling: 0.4 } : {}) });
+        e.render(out.subarray(i, i + 128), 128, i);
+      }
+      return db(rms(out, 0.5, 0.8));
+    };
+    assert.ok(run(0.32) < run(null) + 3, `${bridged ? 'modelled' : 'classic'}: ${run(0.32).toFixed(1)} dB after a setting change vs ${run(null).toFixed(1)} dB without`);
+  }
 });

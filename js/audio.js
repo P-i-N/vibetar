@@ -10,7 +10,7 @@ export const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7, bowed: 1.25 };
 // how much of the strings' along-top motion the classic body lets through
 export const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6, bowed: 0 };
 // level of the modelled body against the classic one, so switching does not change the loudness
-export const MODEL_TRIM = { steel: 1.0, nylon: 2.0, twelve: 0.71 };
+export const MODEL_TRIM = { steel: 1.0, nylon: 1.4, twelve: 0.92 };
 const MODELLED = new Set(['steel', 'nylon', 'twelve']);
 export const hasModel = (inst) => !!inst.bodyModel && MODELLED.has(inst.preset);
 
@@ -21,7 +21,7 @@ export const cacheKey = (name, fs) => `body:${MODEL_VERSION}:${name}:${fs}`;
 // is this (possibly cached) record a usable body for this instrument and sample rate?
 export function validBody(rec, name, fs) {
   if (!rec || typeof rec !== 'object' || rec.version !== MODEL_VERSION || rec.name !== name || rec.fs !== fs) return false;
-  if (!Array.isArray(rec.irs) || rec.irs.length !== 8) return false;
+  if (!Array.isArray(rec.irs) || rec.irs.length !== 12) return false;
   const len = rec.irs[0] && rec.irs[0].length;
   if (!len) return false;
   for (const h of rec.irs) {
@@ -29,7 +29,9 @@ export function validBody(rec, name, fs) {
     for (let k = 0; k < 16; k++) if (!Number.isFinite(h[Math.floor((k * (len - 1)) / 15)])) return false;
   }
   const b = rec.bridge;
-  return !!b && b.K > 0 && !!b.phi && b.phi.length === 6 * b.K && !!b.z && b.z.length === 6;
+  if (!b || !(b.K > 0) || !Number.isFinite(b.gRes)) return false;
+  const len2 = (a, n) => !!a && a.length === n && Number.isFinite(a[0]) && Number.isFinite(a[n - 1]);
+  return len2(b.f, b.K) && len2(b.eta, b.K) && len2(b.phi, 6 * b.K) && len2(b.rock, 6 * b.K) && len2(b.z, 6);
 }
 
 function idb(op, key, value) {
@@ -71,12 +73,13 @@ async function loadBody(key, name, fs) {
 }
 
 const bodies = new Map();
-// the modelled body of an instrument (a promise; built or fetched once per page)
+// The modelled body of an instrument (a promise; built or fetched once per page). A build
+// that failed is not tried again on this page: the classic body stays in use.
 export function getBody(name, fs) {
   const key = cacheKey(name, fs);
   if (!bodies.has(key)) {
     const p = loadBody(key, name, fs);
-    p.catch(() => bodies.delete(key));
+    p.catch(() => {});
     bodies.set(key, p);
   }
   return bodies.get(key);
@@ -104,7 +107,7 @@ function reverbBuffer(ctx, size, tone) {
 const engineCfg = (inst, song) => ({
   type: 'cfg', preset: inst.preset, open: song.tuning.map((m) => m + song.capo),
   pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain,
-  symp: inst.symp, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise, pick: inst.picking, tune: song.tuning,
+  symp: inst.symp, coupling: inst.coupling, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise, pick: inst.picking, tune: song.tuning,
 });
 
 class Graph {
@@ -112,20 +115,21 @@ class Graph {
     const c = ctx;
     this.ctx = c; this.node = node;
     const gain = (v) => { const g = c.createGain(); g.gain.value = v; return g; };
-    // The engine sends four channels: towards-top motion of the bass, middle and treble
-    // strings, and the along-top motion of all of them.
-    const split = c.createChannelSplitter(4);
+    // The engine sends six channels: what the bass, middle and treble part of the bridge
+    // receives from the strings' towards-top motion (0-2) and from their along-top motion (3-5).
+    const split = c.createChannelSplitter(6);
     node.connect(split);
     // classic body: one response for everything
     this.mono = gain(1); this.rockMix = gain(0.6);
     for (let z = 0; z < 3; z++) split.connect(this.mono, z);
-    split.connect(this.rockMix, 3); this.rockMix.connect(this.mono);
+    for (let z = 3; z < 6; z++) split.connect(this.rockMix, z);
+    this.rockMix.connect(this.mono);
     this.body = c.createConvolver(); this.body.normalize = false;
     this.classicMix = gain(1);
     this.mono.connect(this.body); this.body.connect(this.classicMix);
-    // modelled body: a response per bridge zone, and one for the bridge rocking
+    // modelled body: a response per part of the bridge, for pushing on it and for rocking it
     this.modelMix = gain(0);
-    this.zones = [0, 1, 2, 3].map((z) => {
+    this.zones = [0, 1, 2, 3, 4, 5].map((z) => {
       const conv = c.createConvolver(); conv.normalize = false;
       split.connect(conv, z); conv.connect(this.modelMix);
       return conv;
@@ -186,7 +190,7 @@ class Graph {
   }
 
   loadModel(body, preset) {
-    for (let z = 0; z < 4; z++) this.zones[z].buffer = toBuffer(this.ctx, { L: body.irs[2 * z], R: body.irs[2 * z + 1] });
+    for (let z = 0; z < 6; z++) this.zones[z].buffer = toBuffer(this.ctx, { L: body.irs[2 * z], R: body.irs[2 * z + 1] });
     this.loaded = preset; this.bridgeData = body.bridge;
   }
 
@@ -279,7 +283,7 @@ export class AudioEngine {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         this.ctx = new Ctx({ latencyHint: 'interactive' });
         await this.ctx.audioWorklet.addModule(WORKLET_URL);
-        const node = new AudioWorkletNode(this.ctx, 'vibetar-strings', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [4] });
+        const node = new AudioWorkletNode(this.ctx, 'vibetar-strings', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [6] });
         this.graph = new Graph(this.ctx, node);
         this.graph.onNotice = (msg) => this.onNotice && this.onNotice(msg);
         if (this.song) { this.graph.setInstrument(this.song.inst, this.song, false); this.graph.setFx(this.song.fx, this.song.bpm, false); }
@@ -331,7 +335,7 @@ export async function renderSong(song, rnd, sampleRate = 48000) {
   const events = songEvents(song, 0, n, lead, rnd);
   if (song.inst.preset === 'bowed') for (let s = 0; s < 6; s++) events.push({ type: 'o', t: lead + n * stepDur, s });
   const node = new AudioWorkletNode(ctx, 'vibetar-strings', {
-    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [4],
+    numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [6],
     processorOptions: { cfg: { ...engineCfg(song.inst, song), bridge: body ? body.bridge : null }, events },
   });
   const graph = new Graph(ctx, node);

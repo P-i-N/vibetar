@@ -127,3 +127,16 @@ test('the body model setting defaults to modelled and survives the link', async 
   const old = S.unpackSong({ v: 1, t: 'old', b: 100, g: [4, 4, 1], u: [40, 45, 50, 55, 59, 64], c: 0, n: 'A3', i: ['steel', 0.17, 0.72, 0, 0, 0.85, 0.3, 14, 0.35, 1], x: [1, 0.26, 2.2, 0.5, 0, '8d', 0.35, 0.22, 0.8] });
   assert.equal(old.inst.bodyModel, 1);
 });
+
+test('string coupling is its own setting; the classic junction keeps its own', async () => {
+  const song = S.newSong();
+  assert.equal(song.inst.symp, 0.3);
+  song.inst.coupling = 0.75; song.inst.symp = 0.1;
+  const back = await S.decodeSong(await S.encodeSong(song));
+  assert.equal(back.inst.coupling, 0.75);
+  assert.equal(back.inst.symp, 0.1);
+  // a link from before the setting existed gets the instrument's default, and keeps its old sympathetic value
+  const old = S.unpackSong({ v: 1, t: 'old', b: 100, g: [4, 4, 1], u: [40, 45, 50, 55, 59, 64], c: 0, n: 'A3', i: ['nylon', 0.2, 0.5, 0, 0, 0.9, 0.3, 18, 0.35, 1], x: [1, 0.26, 2.2, 0.5, 0, '8d', 0.35, 0.22, 0.8] });
+  assert.equal(old.inst.coupling, S.INSTRUMENTS.nylon.coupling);
+  assert.equal(old.inst.symp, 0.3);
+});

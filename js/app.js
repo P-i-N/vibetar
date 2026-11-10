@@ -489,7 +489,7 @@ function mkSlider(parent, get, set, label, min, max, step, fmt, showFor) {
     input.value = v;
     out.textContent = fmt(v);
     input.style.setProperty('--p', ((v - min) / (max - min)) * 100 + '%');
-    if (showFor) row.hidden = !showFor(song.inst.preset);
+    if (showFor) row.hidden = !showFor(song.inst.preset, song.inst);
     if (typeof label === 'function') name.textContent = label(song.inst.preset);
   };
   if (typeof label === 'function') name.textContent = label(song.inst.preset);
@@ -514,7 +514,9 @@ function buildSettings() {
   mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed, plucked);
   mkSlider(I, ...inst('vibrato'), 'Vibrato', 0, 2, 0.02, pct, (p) => p === 'bowed');
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
-  mkSlider(I, ...inst('symp'), 'String coupling', 0, 1, 0.01, pct, plucked);
+  // how strongly strings feel each other: through the modelled bridge, or the classic body's simple junction
+  mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct, (p, i) => p !== 'bowed' && !!i.bodyModel);
+  mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, (p, i) => p !== 'bowed' && !i.bodyModel);
   mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct, plucked);
   mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms', plucked);
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);

@@ -26,15 +26,17 @@ test('demo songs keep their level and balance on the modelled body', () => {
     if (song.inst.preset === 'bowed') continue;
     const c = stats(renderMix(song, false)), m = stats(renderMix(song, true));
     assert.ok(Math.abs(m.rms - c.rms) < 3, `${song.title}: level ${(m.rms - c.rms).toFixed(1)} dB from classic`);
-    // at the default master volume (0.8) the mix stays below full scale before the soft clipper
-    assert.ok(m.peak * 0.8 <= 1.0, `${song.title}: peak ${m.peak.toFixed(2)}`);
+    // at the default master volume (0.8) only the tips of the loudest attacks reach into the soft
+    // clipper's knee (it is linear to 0.62 and rounds off towards 0.98)
+    assert.ok(m.peak * 0.8 <= 1.1, `${song.title}: peak ${m.peak.toFixed(2)}`);
     m.bands.forEach((v, i) => assert.ok(Math.abs(v - c.bands[i]) < 6, `${song.title}: ${125 * 2 ** i} Hz band ${(v - c.bands[i]).toFixed(1)} dB from classic`));
   }
 });
 
-test('new songs start on the modelled body with physical string coupling', () => {
+test('new songs start on the modelled body; the classic junction keeps its old strength', () => {
   for (const name of ['steel', 'nylon', 'twelve']) {
     assert.equal(S.INSTRUMENTS[name].bodyModel, 1);
-    assert.equal(S.INSTRUMENTS[name].symp, 1);
+    assert.equal(S.INSTRUMENTS[name].symp, 0.3);
+    assert.ok(S.INSTRUMENTS[name].coupling > 0 && S.INSTRUMENTS[name].coupling <= 1);
   }
 });

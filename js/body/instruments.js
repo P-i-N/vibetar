@@ -15,6 +15,9 @@ export const WOODS = {
   maple: { EL: 12e9, ER: 1.3e9, GLR: 1.0e9, nuLR: 0.4, rho: 650 },
 };
 const W = WOODS;
+// the same wood with its grain running across the body (x) instead of along it: bridges and
+// bridge plates are cut that way, which is what makes the bridge a stiff bar across the strings
+const across = (w) => ({ EL: w.ER, ER: w.EL, GLR: w.GLR, nuLR: (w.nuLR * w.ER) / w.EL, rho: w.rho });
 
 export const AIR = { rho: 1.2, c: 343 };
 
@@ -41,8 +44,8 @@ function xBraced({ cross, bw, bh, bridgeY, bridge }) {
       tucked(brace(-0.15, 0.085, 0.15, 0.085, 0.012, 0.016)),            // upper transverse bar
     ],
     patches: [
-      { x0: -bridge.w / 2, y0: bridgeY - 0.012, x1: bridge.w / 2, y1: bridgeY + bridge.d - 0.012, thickness: bridge.t, wood: W.rosewood, mass: 0 },
-      { x0: -0.08, y0: bridgeY - 0.02, x1: 0.08, y1: bridgeY + 0.025, thickness: 0.0025, wood: W.maple, mass: 0 }, // bridge plate
+      { x0: -bridge.w / 2, y0: bridgeY - 0.012, x1: bridge.w / 2, y1: bridgeY + bridge.d - 0.012, thickness: bridge.t, wood: across(W.rosewood), mass: 0 },
+      { x0: -0.08, y0: bridgeY - 0.02, x1: 0.08, y1: bridgeY + 0.025, thickness: 0.0025, wood: across(W.maple), mass: 0 }, // bridge plate
     ],
   };
 }
@@ -52,7 +55,7 @@ function fanBraced({ bridgeY, bridge }) {
   for (let k = -3; k <= 3; k++) fans.push(brace(k * 0.02, 0.20, k * 0.05, 0.44, 0.004, 0.005));
   return {
     braces: [...fans, tucked(brace(-0.14, 0.085, 0.14, 0.085, 0.007, 0.014)), tucked(brace(-0.12, 0.195, 0.12, 0.195, 0.007, 0.014))],
-    patches: [{ x0: -bridge.w / 2, y0: bridgeY - 0.010, x1: bridge.w / 2, y1: bridgeY + bridge.d - 0.010, thickness: bridge.t, wood: W.rosewood, mass: 0 }],
+    patches: [{ x0: -bridge.w / 2, y0: bridgeY - 0.010, x1: bridge.w / 2, y1: bridgeY + bridge.d - 0.010, thickness: bridge.t, wood: across(W.rosewood), mass: 0 }],
   };
 }
 
@@ -78,7 +81,7 @@ export const INSTRUMENTS = {
     outline: { length: 0.485, upper: 0.275, waist: 0.235, lower: 0.365, yUpper: 0.095, yWaist: 0.185, yLower: 0.35 },
     depth: 0.095,
     hole: { y: 0.135, r: 0.043 },
-    top: { wood: W.cedar, thickness: 0.0023, clamp: 1, ...fanBraced({ bridgeY: 0.325, bridge: { w: 0.190, d: 0.028, t: 0.005 } }) },
+    top: { wood: W.cedar, thickness: 0.0025, clamp: 1, ...fanBraced({ bridgeY: 0.325, bridge: { w: 0.190, d: 0.028, t: 0.008 } }) }, // bridge with saddle and tie block: ~34 g
     back: { wood: W.rosewood, thickness: 0.0025, clamp: 1, braces: ladder([0.11, 0.24, 0.37], 0.19, 0.006, 0.014), patches: [] },
     saddle: { y: 0.325, xs: SADDLE_X.map((x) => x * 1.08), height: 0.010 },
     strings: { mu: [5.4e-3, 3.4e-3, 1.9e-3, 0.95e-3, 0.55e-3, 0.38e-3], scale: 0.650 },

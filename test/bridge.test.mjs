@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FS, OPEN, midiHz, spectrum, peakNear, db, rms, peak, engine, render, cachedBody, convolve, aLevel } from './util.mjs';
 
-const coupled = (cfg = {}, fs = FS, name = 'steel') => engine({ preset: name, bridge: cachedBody(name, fs).bridge, symp: 1, ...cfg }, fs);
+const coupled = (cfg = {}, fs = FS, name = 'steel') => engine({ preset: name, bridge: cachedBody(name, fs).bridge, coupling: 1, ...cfg }, fs);
 const classic = (cfg = {}) => engine({ bridge: null, ...cfg });
 const pluck = (e, s, fret, t = 0.02, open = OPEN) => e.post({ type: 'n', t, s, f: midiHz(open[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1 });
 const energy = (v) => { let e = 0; for (let i = 0; i < v.bv.length; i++) e += v.bv[i] ** 2 + v.bh[i] ** 2; return e; };
@@ -79,8 +79,8 @@ test('a note on the main top resonance loses its fundamental faster than its nei
 });
 
 test('sympathetic strings ring through the body', () => {
-  const run = (symp) => {
-    const e = coupled({ symp });
+  const run = (coupling) => {
+    const e = coupled({ coupling });
     pluck(e, 5, 0); // E4; the open low E (two octaves below) is left untouched
     render(e, 1);
     return db(Math.sqrt(energy(e.voices[0]) / energy(e.voices[5])));
@@ -101,14 +101,7 @@ test('two-stage decay: towards-top motion dies faster than along-top motion', ()
   assert.ok(rateV > 1.5 * rateH, `towards-top ${rateV.toFixed(2)}, along-top ${rateH.toFixed(2)} (nepers of energy per second)`);
 });
 
-test('sustain per string stays within 30 % of the classic engine', () => {
-  for (let s = 0; s < 6; s++) for (const fret of [0, 5]) {
-    const a = coupled(), b = classic();
-    pluck(a, s, fret); pluck(b, s, fret);
-    const ta = decayTime(render(a, 9), 30), tb = decayTime(render(b, 9), 30);
-    assert.ok(ta / tb > 0.7 && ta / tb < 1.3, `string ${s} fret ${fret}: ${ta.toFixed(2)} s vs classic ${tb.toFixed(2)} s`);
-  }
-});
+// (sustain against the classic body is checked on the heard signal, in heard.test.mjs)
 
 test('works at 44.1 kHz, in drop D and with a capo', () => {
   const N = 1 << 16;
@@ -138,10 +131,10 @@ test('note loudness across the range is more even once the strings feel the brid
       if (m - OPEN[s] > 4 && s < 5 && m >= OPEN[s + 1]) s++;
       const e = make();
       e.post({ type: 'n', t: 0.02, s, f: midiHz(m), v: 0.8, k: '', fr: m > OPEN[s], d: 1 });
-      const n = FS, ch = [0, 1, 2, 3].map(() => new Float32Array(n - (n % 128)));
+      const n = FS, ch = [0, 1, 2, 3, 4, 5].map(() => new Float32Array(n - (n % 128)));
       for (let i = 0; i + 128 <= n; i += 128) e.render(ch.map((c) => c.subarray(i, i + 128)), 128, i);
       const z = s >> 1;
-      const y = convolve(ch[z], b.irs[2 * z]), r = convolve(ch[3], b.irs[6]);
+      const y = convolve(ch[z], b.irs[2 * z]), r = convolve(ch[3 + z], b.irs[6 + 2 * z]);
       for (let i = 0; i < y.length; i++) y[i] += r[i];
       lv.push(aLevel(y, 0, 16384));
     }
