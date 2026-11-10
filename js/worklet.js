@@ -62,15 +62,70 @@ function designDamping(f0, b1, b3, fs) {
   return { a, g: Math.min(0.99999, G0 / lpMag(a, w0)) };
 }
 
+// Stiffness: M equal first-order allpass sections in the loop, together with the loss
+// filter (one-pole, coefficient a), delay the low partials more than the high ones. Returns
+// the section coefficient c that puts partials 2..K (up to 5 kHz) closest to
+// f_k = k f sqrt((1 + B k²) / (1 + B)), the fundamental being tuned exactly by the delay line.
+// The loop's phase delay at f_k must be k fs / f_k; each partial's stretch counts relative to
+// what it should be, so every partial's inharmonicity weighs alike; low partials weigh more.
+const MAX_SECTIONS = 6;
+const LONG_Q = 6;     // of the longitudinal resonance
+function sectionsFor(f, B, fs) {
+  const N = fs / f, K = Math.max(2, Math.min(30, Math.floor(5000 / f)));
+  // first-order sections stretch the high partials too little on the stiffest strings: one more there
+  return clamp(Math.ceil((N * (1 - 1 / Math.sqrt(1 + B * K * K))) / 3), B >= 4e-5 ? 2 : 1, MAX_SECTIONS);
+}
+function designDispersion(f, B, M, a, fs) {
+  const N = fs / f, K = Math.max(2, Math.min(30, Math.floor(5000 / f)));
+  const w1 = (TAU * f) / fs;
+  const err = (c) => {
+    const at1 = lpDelay(a, w1) + M * apDelay(c, w1);
+    let e = 0;
+    for (let k = 2; k <= K; k++) {
+      const fk = k * f * Math.sqrt((1 + B * k * k) / (1 + B)), w = (TAU * fk) / fs;
+      if (w > 0.9 * Math.PI) break;
+      const need = N - (k * fs) / fk, r = (N + lpDelay(a, w) + M * apDelay(c, w) - at1 - (k * fs) / fk) / need;
+      e += (r * r) / k;
+    }
+    return e;
+  };
+  // golden-section search; stiffness only ever needs a negative coefficient
+  let lo = -0.97, hi = 0;
+  const g = (Math.sqrt(5) - 1) / 2;
+  let x1 = hi - g * (hi - lo), x2 = lo + g * (hi - lo), e1 = err(x1), e2 = err(x2);
+  for (let i = 0; i < 40; i++) {
+    if (e1 < e2) { hi = x2; x2 = x1; e2 = e1; x1 = hi - g * (hi - lo); e1 = err(x1); }
+    else { lo = x1; x1 = x2; e1 = e2; x2 = lo + g * (hi - lo); e2 = err(x2); }
+  }
+  const c = 0.5 * (lo + hi);
+  return err(c) < err(0) ? c : 0;
+}
+
 // ---- instrument definitions ----------------------------------------------
 // index 0 = lowest string. b1 [1/s] broadband loss, b3 [s] high-frequency loss.
+//   B        inharmonicity of the open string: partials at k f sqrt((1 + B k²) / (1 + B)).
+//            B = π³ E d⁴ / (64 T L²) with the diameter d of the string, of the core for a wound one
+//   tm       how far (cents) an mf pluck of the open string starts sharp: the plucked string is
+//            stretched, so its tension rises with its energy (tension modulation)
+//   fL       first longitudinal resonance, as a multiple of the open string's pitch
+//   phantom  level (dB) of the longitudinal pull on the bridge against the towards-top force, at mf
+// Steel: a 12-53 phosphor bronze set on a 648 mm scale (E 200 GPa, tensions 104-142 N, core
+// diameters 0.28-0.46 mm). The pitch rise is the mean extra tension E A ΔL / L of a pluck
+// 0.8 (top) to 2 mm (bass) wide; the longitudinal force on the bridge goes as (E A / 2 T) times
+// the string's slope there. Nylon: E about 3 GPa; its bass strings have a soft multifilament core.
+// tmE and phCal convert the engine's units: the loop energy of an mf pluck, and the gain that
+// gives the longitudinal pull its level.
 
 const PRESETS = {
   steel: {
     b1: [0.50, 0.55, 0.62, 0.72, 0.80, 0.90],
     b3: [4.6e-7, 4.3e-7, 4.0e-7, 3.8e-7, 2.6e-7, 2.4e-7],
-    apN: [4, 4, 3, 2, 0, 0],
-    apC: [-0.78, -0.74, -0.68, -0.6, 0, 0],
+    B: [8.3e-5, 4.6e-5, 2.7e-5, 1.1e-5, 6.0e-5, 1.9e-5],
+    tm: [4.1, 2.0, 1.1, 0.5, 0.95, 0.34],
+    fL: [16.4, 13.6, 12.0, 9.6, 15.8, 11.8],
+    phantom: [-24, -29, -32, -38, -31, -38],
+    tmE: [70.9, 73.1, 45.3, 26.5, 17.4, 9.87],
+    phCal: [12.4, 9.88, 9.04, 12, 23.8, 15.4],
     gain: [1.0, 1.0, 0.98, 0.94, 0.9, 0.86],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     // the strings' own loss per string when tied to the modelled bridge, trimmed so that the
@@ -80,16 +135,24 @@ const PRESETS = {
   nylon: {
     b1: [0.95, 1.0, 1.1, 1.5, 1.65, 1.8],
     b3: [1.0e-6, 0.95e-6, 0.9e-6, 1.3e-6, 1.2e-6, 1.1e-6],
-    apN: [1, 1, 1, 0, 0, 0],
-    apC: [-0.5, -0.45, -0.4, 0, 0, 0],
+    B: [5e-6, 5e-6, 5e-6, 7.2e-5, 2.7e-5, 1.3e-5],
+    tm: [0.9, 0.8, 0.7, 0.3, 0.3, 0.25],
+    fL: [5.2, 5.0, 5.0, 6.4, 5.05, 3.8],
+    phantom: [-41, -42, -43, -46, -47, -48],
+    tmE: [75, 65.5, 44.2, 22.9, 14.7, 9.53],
+    phCal: [5.03, 5.08, 6.39, 8.43, 7.55, 6.86],
     gain: [1.0, 1.0, 1.0, 1.0, 0.97, 0.94],
     mixH: 0.55, polCents: 0.7, pickNoise: 0.04, wound: 3,
   },
   twelve: {
     b1: [0.55, 0.6, 0.68, 0.78, 0.85, 0.95],
     b3: [5.0e-7, 4.6e-7, 4.3e-7, 4.0e-7, 2.8e-7, 2.6e-7],
-    apN: [4, 4, 3, 2, 0, 0],
-    apC: [-0.78, -0.74, -0.68, -0.6, 0, 0],
+    B: [8.3e-5, 4.6e-5, 2.7e-5, 1.1e-5, 6.0e-5, 1.9e-5],
+    tm: [3.3, 1.6, 0.9, 0.4, 0.8, 0.3],
+    fL: [16.4, 13.6, 12.0, 9.6, 15.8, 11.8],
+    phantom: [-25, -30, -33, -39, -32, -39],
+    tmE: [55.6, 66, 37.7, 31.1, 17.9, 11],
+    phCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
     gain: [0.8, 0.8, 0.78, 0.76, 0.7, 0.66],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     tied: [1, 1, 1, 0.55, 1.6, 1.15],
@@ -98,6 +161,13 @@ const PRESETS = {
     pairB1: [0.85, 0.9, 0.95, 1.05, 0.8, 0.9],
     pairB3: [3.6e-7, 3.4e-7, 3.2e-7, 3.0e-7, 3.4e-7, 3.0e-7],
     pairGain: [0.62, 0.62, 0.6, 0.58, 0.7, 0.66],
+    // the thin plain octave strings, and the unison strings like their partners
+    pairB: [2e-5, 2e-5, 2e-5, 2e-5, 6.0e-5, 1.9e-5],
+    pairTm: [0.3, 0.3, 0.3, 0.3, 0.8, 0.3],
+    pairFL: [23.6, 17.7, 13.3, 9.9, 15.8, 11.8],
+    pairPhantom: [-36, -36, -37, -39, -32, -39],
+    pairTmE: [36.3, 21.9, 12.5, 6.73, 17.1, 9.98],
+    pairPhCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
   },
 };
 
@@ -120,7 +190,7 @@ const PLUCKERS = [
   { name: 'flesh', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 40, noise: 0.02, pos: 1.25, gain: 1 },
   { name: 'short nails', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 45, noise: 0.02, pos: 1.1, gain: 1,
     nail: { at: 0.7, relMs: 0.35, click: 0.04 } },
-  { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.12, holdMs: 4, thetaDeg: 50, noise: 0.08, pos: 1.0, gain: 1 },
+  { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.15, holdMs: 4, thetaDeg: 50, noise: 0.08, pos: 1.0, gain: 1 },
   { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
 ];
 const HAMMER = 1.12;   // strength of a hammer-on blow, against a pluck at the same velocity
@@ -152,9 +222,12 @@ class PluckVoice {
     this.excLen = 0; this.excPos = 0; this.excV = 0.8; this.excH = 0.6;
     this.aV = 0.1; this.gV = 0.99; this.lpV = 0;
     this.aH = 0.1; this.gH = 0.99; this.lpH = 0;
-    this.apN = 0; this.apC0 = 0; this.apC = 0;
-    this.axV = new Float64Array(4); this.ayV = new Float64Array(4);
-    this.axH = new Float64Array(4); this.ayH = new Float64Array(4);
+    this.apN = 0; this.apC = 0; this.apCache = new Map(); this.B = 0;
+    this.axV = new Float64Array(MAX_SECTIONS); this.ayV = new Float64Array(MAX_SECTIONS);
+    this.axH = new Float64Array(MAX_SECTIONS); this.ayH = new Float64Array(MAX_SECTIONS);
+    // tension modulation, and the longitudinal pull: gain, resonator coefficients and state
+    this.tmK = 0; this.tmAge = 0; this.tmRise = 0; this.fL = 12; this.phG = 0;
+    this.phN = new Float64Array(3); this.phS = new Float64Array(4);
     this.dV = 100; this.dH = 100; this.dVinc = 0; this.dHinc = 0;
     this.tV = 100; this.tH = 100;
     this.dampGain = 1; this.dampCount = 0;
@@ -263,7 +336,7 @@ class PluckVoice {
     const bv = this.bv, bh = this.bh;
     for (let i = 0; i < bv.length; i++) { bv[i] *= g; bh[i] *= g; }
     this.lpV *= g; this.lpH *= g;
-    for (let i = 0; i < 4; i++) { this.axV[i] *= g; this.ayV[i] *= g; this.axH[i] *= g; this.ayH[i] *= g; }
+    for (let i = 0; i < MAX_SECTIONS; i++) { this.axV[i] *= g; this.ayV[i] *= g; this.axH[i] *= g; this.ayH[i] *= g; }
   }
 
   letGo() {
@@ -342,10 +415,15 @@ class PluckVoice {
   }
 
   placeTouch(N, D) {
-    const n0 = D | 0, tau = N - D; // tau: delay of the loop filters, lumped at the bridge
+    // tau: delay of the loop filters, lumped at the bridge. On a stiff wound string it can reach
+    // past points near the bridge (the palm): then all points move away from it together, just
+    // far enough, keeping their spacing.
+    const n0 = D | 0, tau = N - D;
+    let shift = 0;
+    for (let i = 0; i < this.tn; i++) shift = Math.max(shift, 1 - Math.round((this.tx[i] - tau) / 2));
     for (let i = 0; i < this.tn; i++) {
       const x = this.tx[i];
-      let a = Math.max(1, Math.round((x - tau) / 2));
+      let a = Math.round((x - tau) / 2) + shift;
       let b = a + Math.round(N - x);
       if (b > n0 - 2) b = n0 - 2;
       if (a >= b) a = b; // degenerate: no effect
@@ -409,6 +487,36 @@ class PluckVoice {
     this.aH = dh.a; this.gH = dh.g;
   }
 
+  // Stiffness and longitudinal resonance of the string stopped for a note at f: both follow
+  // the vibrating length. Stiffness grows with the square of the frequency. After setDamping.
+  setStiffness(f) {
+    const key = Math.round(f * 64) * 100000 + Math.round(this.aV * 1e5);
+    let c = this.apCache.get(key);
+    if (c == null) {
+      c = this.apN ? designDispersion(f, this.B * (f / this.openF) ** 2, this.apN, this.aV, this.fs) : 0;
+      if (this.apCache.size > 512) this.apCache.clear();
+      this.apCache.set(key, c);
+    }
+    this.apC = c;
+    // the longitudinal pull rings at the string's longitudinal resonance (a bandpass)
+    const w = Math.min(0.9 * Math.PI, (TAU * this.fL * f) / this.fs);
+    const al = Math.sin(w) / (2 * LONG_Q), a0 = 1 + al, b = this.phN;
+    b[0] = al / a0; b[1] = (-2 * Math.cos(w)) / a0; b[2] = (1 - al) / a0;
+  }
+
+  // Stretching the string raises its tension with the energy it carries: the pitch rises
+  // by tmK x (loop energy) relative to the note, falling back as the note dies away.
+  // The energy is summed every fourth block (about 11 ms): it changes slowly.
+  tension() {
+    if (!this.tmK) return 0;
+    if (this.tmAge-- > 0) return this.tmRise;
+    this.tmAge = 3;
+    const bv = this.bv, bh = this.bh, m = this.mask, n = this.dV | 0;
+    let e = 0;
+    for (let i = 1; i <= n; i++) { const j = (this.w - i) & m; e += bv[j] * bv[j] + bh[j] * bh[j]; }
+    return (this.tmRise = this.tmK * e);
+  }
+
   retune(f, immediate) {
     const fs = this.fs;
     f = clamp(f, 30, fs * 0.2);
@@ -417,19 +525,12 @@ class PluckVoice {
     const fH = f * this.polDet;
     const wH = (TAU * fH) / fs;
     let apV = 0, apH = 0;
-    if (this.apN) {
-      // dispersion scales with the vibrating length
-      const tauOpen = (1 - this.apC0) / (1 + this.apC0);
-      const tau = 1 + (tauOpen - 1) * Math.min(1, this.openF / f);
-      const c = (1 - tau) / (1 + tau);
-      this.apC = c;
-      apV = this.apN * apDelay(c, w);
-      apH = this.apN * apDelay(c, wH);
-    }
+    if (this.apN) { apV = this.apN * apDelay(this.apC, w); apH = this.apN * apDelay(this.apC, wH); }
     // the bridge's give shifts the pitch of what it radiates: tune the fundamental for it
     const br = this.bridge;
     this.tV = Math.max(2.001, fs / f - lpDelay(this.aV, w) - apV - (br ? br.reflectionDelay(this.loopV, f) : 0));
     this.tH = Math.max(2.001, fs / fH - lpDelay(this.aH, wH) - apH - (br ? br.reflectionDelay(this.loopH, fH) : 0));
+    this.baseF = f; this.baseV = this.tV; this.baseH = this.tH;
     if (immediate) { this.dV = this.tV; this.dH = this.tH; this.dVinc = 0; this.dHinc = 0; }
   }
 
@@ -515,6 +616,7 @@ class PluckVoice {
     if (pm) b3 *= 1.6;
     else if (dead) { b1 = b1 * 2 + 6; b3 *= 3; }
     this.setDamping(f, b1, b3);
+    this.setStiffness(f);
     const N = this.fs / f;
     if (!legato) {
       this.gFrom = 0; this.bendAmt = 0; this.vibDepth = 0;
@@ -579,6 +681,7 @@ class PluckVoice {
     this.gFrom = 0; this.bendAmt = 0; this.vibDepth = 0;
     this.freq = this.openF * this.ratio;
     this.setDamping(this.freq, this.b1, this.b3);
+    this.setStiffness(this.freq);
     this.retune(this.freq, true);
     this.release(0);
     this.sqN = 0; this.contact = 0;
@@ -606,9 +709,16 @@ class PluckVoice {
       if (tt > 0) semis += this.vibDepth * Math.min(1, tt / 0.3) * 0.5 * (1 - Math.cos(TAU * 5.3 * tt));
       active = true;
     }
-    if (!active && !this.modPrev) { this.dVinc = 0; this.dHinc = 0; return; }
-    this.modPrev = active;
-    this.retune(this.freq * Math.pow(2, semis / 12), false);
+    const rise = this.tension() > 6e-6 ? this.tmRise : 0;
+    if (!active && !rise && !this.modPrev) { this.dVinc = 0; this.dHinc = 0; return; }
+    this.modPrev = active || rise > 0;
+    if (active) this.retune(this.freq * Math.pow(2, semis / 12 + 1.4427 * rise), false); // log2(1 + rise)
+    else {
+      // a rise of a few cents only shortens the loop: no need to tune it afresh
+      if (this.baseF !== this.freq) this.retune(this.freq, false);
+      this.tV = this.baseV - (this.fs / this.freq) * rise;
+      this.tH = this.baseH - (this.fs / (this.freq * this.polDet)) * rise;
+    }
     this.dVinc = (this.tV - this.dV) / n;
     this.dHinc = (this.tH - this.dH) / n;
   }
@@ -686,13 +796,23 @@ class PluckVoice {
     this.w = (w + 1) & m;
     // towards-top motion (plus finger noise) is returned, along-top motion kept aside:
     // the body hears the two through different paths
-    this.outH = yh * this.gain;
+    // the stretching string pulls on the bridge along itself, with the square of its slope
+    // there: sums of partials, ringing at the longitudinal resonance. The pull rocks the bridge.
+    let ph = 0;
+    if (this.phG) {
+      const x = yv * yv + yh * yh, N = this.phN, s = this.phS;
+      let y = N[0] * (x - s[1]) - N[1] * s[2] - N[2] * s[3];
+      if (y < 1e-20 && y > -1e-20) y = 0;
+      s[3] = s[2]; s[2] = y; s[1] = s[0]; s[0] = x;
+      ph = this.phG * y;
+    }
+    this.outH = yh * this.gain + ph;
     return yv * this.gain + sq;
   }
 
   clear() {
     this.bv.fill(0); this.bh.fill(0);
-    this.axV.fill(0); this.ayV.fill(0); this.axH.fill(0); this.ayH.fill(0);
+    this.axV.fill(0); this.ayV.fill(0); this.axH.fill(0); this.ayH.fill(0); this.phS.fill(0);
     this.lpV = 0; this.lpH = 0; this.excLen = 0; this.dampCount = 0;
     this.sqN = 0; this.sqX1 = this.sqX2 = this.sqY1 = this.sqY2 = this.sqLp = 0;
     this.contact = 0;
@@ -886,8 +1006,13 @@ class VibetarEngine {
       v.gain = isPair ? pr.pairGain[s] : pr.gain[s];
       v.b1 = isPair ? pr.pairB1[s] : pr.b1[s];
       v.b3 = isPair ? pr.pairB3[s] : pr.b3[s];
-      v.apN = isPair ? 0 : pr.apN[s];
-      v.apC0 = isPair ? 0 : pr.apC[s];
+      const pick = (main, pair) => (isPair ? pr[pair][s] : pr[main][s]);
+      v.B = pick('B', 'pairB');
+      v.apN = sectionsFor(v.openF, v.B, fs);
+      v.apCache.clear();
+      v.tmK = pick('tm', 'pairTm') / 1731.2 / pick('tmE', 'pairTmE');
+      v.fL = pick('fL', 'pairFL');
+      v.phG = Math.pow(10, pick('phantom', 'pairPhantom') / 20) * pick('phCal', 'pairPhCal');
       v.mixH = pr.mixH;
       const cents = pr.polCents * (0.7 + 0.6 * ((s * 7 + (isPair ? 3 : 0)) % 5) / 4) * (s % 2 ? -1 : 1);
       v.polDet = Math.pow(2, cents / 1200);

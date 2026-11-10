@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody, aLevel, centroid } from './util.mjs';
+import { PRESETS } from '../js/worklet.js';
 
 const N = 1 << 16;
 
@@ -8,8 +9,9 @@ test('plucked notes are in tune', () => {
   for (const preset of ['steel', 'nylon']) {
     for (const [s, fret] of [[0, 0], [1, 3], [3, 9], [5, 0], [5, 12]]) {
       const f = midiHz(OPEN[s] + fret);
+      // the settled pitch, after the rise of the stretched string at the attack
       const x = note(s, fret, {}, { preset });
-      const p = peakNear(spectrum(x, 4800, N), N, f);
+      const p = peakNear(spectrum(x, FS, N), N, f);
       assert.ok(Math.abs(1200 * Math.log2(p.f / f)) < 1.5, `${preset} s${s} f${fret}: ${p.f} vs ${f}`);
     }
   }
@@ -231,6 +233,9 @@ function fundamentalShare(x, f, t) {
 }
 
 test('a hammer-on or pull-off changes the pitch at once: no glide', () => {
+  // without the slow pitch rise of the stretched string, which follows the energy left on it
+  const keep = PRESETS.steel.tm;
+  PRESETS.steel.tm = keep.map(() => 0);
   for (const [a, b] of [[3, 5], [5, 3], [2, 0]]) {
     const e = legatoNote(1, a, b);
     render(e, 0.3 + 128 / FS);
@@ -241,6 +246,7 @@ test('a hammer-on or pull-off changes the pitch at once: no glide', () => {
     assert.equal(v.gFrom, 0, `${a}->${b}: pitch glide`);
     assert.ok(Math.abs(v.dV - ref.voices[1].tV) < 1e-6 && v.dVinc === 0, `${a}->${b}: delay ${v.dV} vs ${ref.voices[1].tV}`);
   }
+  PRESETS.steel.tm = keep;
 });
 
 test('a hammer-on strikes the string at the fret: heard like a soft note, thin in the fundamental', () => {

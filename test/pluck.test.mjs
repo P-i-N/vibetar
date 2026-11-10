@@ -13,7 +13,9 @@ function playE(pick, s, fret, extra = {}, cfg = {}, secs = 1.5, fs = FS) {
 }
 const play = (...a) => playE(...a).x;
 const bright = (x, fs = FS) => centroid(x, T0, T0 + 0.06, fs);
-const cents = (x, f, fs = FS) => { const N = 1 << 16; return 1200 * Math.log2(peakNear(spectrum(x, Math.floor(fs * 0.15), N), N, f, fs).f / f); };
+// the settled pitch, after the rise of the stretched string at the attack (a fleshy pluck
+// carries more energy than a pick: it settles later)
+const cents = (x, f, fs = FS) => { const N = 1 << 16; return 1200 * Math.log2(peakNear(spectrum(x, Math.floor(fs * 1.5), N), N, f, fs).f / f); };
 
 test('there is a plucker for pick, flesh, short nails, long nails and thumb', () => {
   assert.equal(PLUCKERS.length, 5);
@@ -56,7 +58,7 @@ test('the contact lasts 1-8 ms and ends at the note time', () => {
 test('plucked notes stay within 1.5 cents for every technique', () => {
   for (const p of Object.values(techs)) for (const [s, fret] of [[0, 0], [1, 3], [3, 9], [5, 0], [5, 12]]) {
     const f = midiHz(OPEN[s] + fret);
-    const c = cents(play(p, s, fret, {}, {}, 2.5), f);
+    const c = cents(play(p, s, fret, {}, {}, 3), f);
     assert.ok(Math.abs(c) < 1.5, `technique ${p} s${s} f${fret}: ${c.toFixed(2)} cents`);
   }
 });
@@ -105,16 +107,16 @@ test('works at 44.1 kHz and 96 kHz', () => {
     const f = midiHz(OPEN[2] + 2);
     const c = Object.values(techs).map((p) => bright(play(p, 2, 2, {}, {}, 1.5, fs), fs));
     assert.ok(c[1] < c[2] && c[2] < c[3] && c[3] < c[0], `${fs}: ${c.map(Math.round)}`);
-    assert.ok(Math.abs(cents(play(0, 2, 2, {}, {}, 2.5, fs), f, fs)) < 2);
+    assert.ok(Math.abs(cents(play(0, 2, 2, {}, {}, 3, fs), f, fs)) < 2);
   }
 });
 
 test('fret 24 on the top string and a low C on the bottom string', () => {
   for (const p of Object.values(techs)) {
-    const hi = play(p, 5, 24, {}, {}, 2.5);
+    const hi = play(p, 5, 24, {}, {}, 3);
     assert.ok(Math.abs(cents(hi, midiHz(88))) < 3, `technique ${p}: fret 24`);
     const open = [36, 43, 48, 55, 59, 64];
-    const lo = play(p, 0, 0, {}, { open }, 2.5);
+    const lo = play(p, 0, 0, {}, { open }, 3);
     assert.ok(Math.abs(cents(lo, midiHz(36))) < 3, `technique ${p}: low C`);
     assert.ok(peak(lo) < 2 && peak(hi) < 2 && !lo.some((v) => v !== v));
   }
