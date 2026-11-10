@@ -22,10 +22,10 @@ test('every demo is a valid song that survives the link round trip', async () =>
   }
 });
 
-test('the demos show every instrument, picking, technique, tuning, grid and reverb space', () => {
+test('the demos show every instrument, picking, technique, tuning and grid, all in the same room', () => {
   const seen = (f) => new Set(songs.map(f).flat());
   assert.deepEqual([...seen((s) => s.inst.preset)].sort(), Object.keys(S.INSTRUMENTS).sort());
-  assert.deepEqual([...seen((s) => s.inst.picking)].sort(), [0, 1, 2, 3, 4]);
+  assert.deepEqual([...seen((s) => s.inst.picking)].sort(), [0, 3, 4]);
   const flags = seen((s) => cells(s).flatMap((c) => [...c.t]));
   for (const f of S.FLAGS) assert.ok(flags.has(f), `no demo uses ${f}`);
   const specials = seen((s) => cells(s).map((c) => c.f));
@@ -35,8 +35,7 @@ test('the demos show every instrument, picking, technique, tuning, grid and reve
   assert.ok(songs.some((s) => s.capo > 0), 'a capo');
   assert.deepEqual([...seen((s) => s.spb)].sort(), [2, 3, 4]);
   assert.ok(seen((s) => s.bpb).has(3) && seen((s) => s.bpb).has(2) && seen((s) => s.bpb).has(4));
-  const spaces = seen((s) => S.reverbSpace(s.fx));
-  for (const k of Object.keys(S.REVERBS)) assert.ok(spaces.has(k), `no demo in the ${k} space`);
+  for (const s of songs) assert.equal(S.reverbSpace(s.fx), 'room', s.title);
   assert.ok(songs.some((s) => s.fx.dlyOn), 'the delay');
 });
 
