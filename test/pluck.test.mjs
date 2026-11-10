@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FS, OPEN, midiHz, spectrum, peakNear, db, rms, peak, centroid, engine, render } from './util.mjs';
-import { PLUCKERS } from '../js/worklet.js';
+import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, centroid, engine, render } from './util.mjs';
+import { PLUCKERS, PRESETS } from '../js/worklet.js';
 
 const T0 = 0.05; // release time of the test notes
 const techs = { pick: 0, flesh: 1, nailS: 2, nailL: 3 };
@@ -130,5 +130,32 @@ test('notes faster than the hold time all sound and release', () => {
     assert.equal(e.voices[2].contact, 0, `technique ${p}: contact stuck`);
     assert.ok(db(rms(x, 0.14, 0.19)) > -40, `technique ${p}: last note silent`);
     for (let i = 0; i < 12; i++) assert.ok(db(rms(x, 0.05 + i * 0.008, 0.058 + i * 0.008)) > -45, `technique ${p}: note ${i} missing`);
+  }
+});
+
+// level (dB) above 4 kHz against 200 Hz - 2 kHz in the 43 ms from the release
+function edge(x) {
+  const m = spectrum(x, Math.floor(T0 * FS), 2048);
+  return 10 * Math.log10(bandEnergy(m, 2048, 4000, 10000) / bandEnergy(m, 2048, 200, 2000));
+}
+// the same pluck on a string of no thickness
+function thin(fn) {
+  const keep = PRESETS.steel.dia;
+  PRESETS.steel.dia = keep.map(() => 0);
+  try { return fn(); } finally { PRESETS.steel.dia = keep; }
+}
+
+test('a thick string rolls off the pick more slowly: the wound strings lose their edge, the plain ones keep it', () => {
+  const loss = (s) => thin(() => edge(play(0, s, 0))) - edge(play(0, s, 0));
+  assert.ok(loss(0) > 4, `low E: ${loss(0).toFixed(1)} dB less above 4 kHz than a string of no thickness`);
+  assert.ok(loss(1) > 3, `A: ${loss(1).toFixed(1)} dB`);
+  assert.ok(loss(5) < 2.5 && loss(5) > 0, `high E: ${loss(5).toFixed(1)} dB`);
+  assert.ok(loss(0) > loss(3) && loss(3) > loss(5), 'the thicker the string, the more');
+});
+
+test('the loudness of a pick stroke changes its edge by more than 6 dB from soft to hard', () => {
+  for (const s of [0, 5]) {
+    const soft = edge(play(0, s, 0, { v: 0.4 })), hard = edge(play(0, s, 0, { v: 1 }));
+    assert.ok(hard - soft > 6, `string ${s}: ${(hard - soft).toFixed(1)} dB`);
   }
 });

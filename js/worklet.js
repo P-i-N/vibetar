@@ -133,8 +133,8 @@ function designDispersion(f, B, M, a, m, fs) {
 // index 0 = lowest string. b1 [1/s] broadband loss, b3 [s] high-frequency loss.
 //   flat     frequency (Hz) above which the loss stops growing with the square of the frequency
 //            (0: never). A plain steel string loses its energy to the air and to heat flowing
-//            across the bending wire: both grow more slowly than the friction between the
-//            windings of a wound string or inside nylon. Fitted from 2 to 10 kHz to
+//            across the bending wire: both grow more slowly than the friction inside nylon.
+//            Fitted from 2 to 10 kHz to
 //            sigma = (R0 + R1 sqrt(f)) / (2 mu) + pi f (2.0e-4 + 4 pi² mu E I d f² / T²)
 //            (air, thermoelastic and viscoelastic loss of a 0.3 mm steel wire). The winding of
 //            a new bronze-wound string takes about the same share of the energy in every
@@ -145,6 +145,7 @@ function designDispersion(f, B, M, a, m, fs) {
 //            stretched, so its tension rises with its energy (tension modulation)
 //   fL       first longitudinal resonance, as a multiple of the open string's pitch
 //   phantom  level (dB) of the longitudinal pull on the bridge against the towards-top force, at mf
+//   dia      outer diameter in millimetres: a thick string takes longer to roll off a pick or nail
 // Steel: a 12-53 phosphor bronze set on a 648 mm scale (E 200 GPa, tensions 104-142 N, core
 // diameters 0.28-0.46 mm). The pitch rise is the mean extra tension E A ΔL / L of a pluck
 // 0.8 (top) to 2 mm (bass) wide; the longitudinal force on the bridge goes as (E A / 2 T) times
@@ -160,6 +161,7 @@ const PRESETS = {
     tm: [4.1, 2.0, 1.1, 0.5, 0.95, 0.34],
     fL: [16.4, 13.6, 12.0, 9.6, 15.8, 11.8],
     phantom: [-24, -29, -32, -38, -31, -38],
+    dia: [1.35, 1.07, 0.81, 0.61, 0.41, 0.30],
     tmE: [70.9, 73.1, 45.3, 26.5, 17.4, 9.87],
     phCal: [12.4, 9.88, 9.04, 12, 23.8, 15.4],
     flat: [6000, 6000, 6000, 6000, 8000, 8000],
@@ -176,6 +178,7 @@ const PRESETS = {
     tm: [0.9, 0.8, 0.7, 0.3, 0.3, 0.25],
     fL: [5.2, 5.0, 5.0, 6.4, 5.05, 3.8],
     phantom: [-41, -42, -43, -46, -47, -48],
+    dia: [1.09, 0.89, 0.74, 1.02, 0.82, 0.71],
     tmE: [75, 65.5, 44.2, 22.9, 14.7, 9.53],
     phCal: [5.03, 5.08, 6.39, 8.43, 7.55, 6.86],
     gain: [1.0, 1.0, 1.0, 1.0, 0.97, 0.94],
@@ -188,6 +191,7 @@ const PRESETS = {
     tm: [3.3, 1.6, 0.9, 0.4, 0.8, 0.3],
     fL: [16.4, 13.6, 12.0, 9.6, 15.8, 11.8],
     phantom: [-25, -30, -33, -39, -32, -39],
+    dia: [1.19, 0.91, 0.66, 0.58, 0.36, 0.25],
     tmE: [55.6, 66, 37.7, 31.1, 17.9, 11],
     phCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
     flat: [6000, 6000, 6000, 6000, 8000, 8000],
@@ -205,6 +209,7 @@ const PRESETS = {
     pairTm: [0.3, 0.3, 0.3, 0.3, 0.8, 0.3],
     pairFL: [23.6, 17.7, 13.3, 9.9, 15.8, 11.8],
     pairPhantom: [-36, -36, -37, -39, -32, -39],
+    pairDia: [0.69, 0.46, 0.30, 0.20, 0.36, 0.25],
     pairTmE: [36.3, 21.9, 12.5, 6.73, 17.1, 9.98],
     pairPhCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
   },
@@ -222,19 +227,27 @@ const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 //   holdMs    how long the stroke takes to load the string (at medium strength)
 //   thetaDeg  stroke direction: 0 = straight towards the top, 90 = along the top
 //   pos       plucking point relative to the instrument's "pick position"
-//   relMs     how long the string takes to slide off once the plucker lets go
+//   relMs     how long the string takes to slide off once the plucker lets go, at mf (for a
+//             plucker with an edge: a string of no thickness)
+//   edge      a hard plucker (pick, nail): the string rolls off its edge over its own
+//             thickness, which takes 1 + (string diameter / edge, in mm) times as long, and a
+//             faster stroke is past the string sooner (see RELEASE). Flesh lets go in its own
+//             time, a little sooner when the stroke is firm.
+//   noise     roughness of the contact, as a share of the force. Kept small: more of it covers
+//             the difference between a soft and a hard stroke with the same hiss.
 //   nail      a nail behind the flesh catches the string at `at` x the release force
 const PLUCKERS = [
-  { name: 'pick', k: 0.9, r: 0.3, widthMm: 1, relMs: 0.12, holdMs: 3, thetaDeg: 25, noise: 0.10, pos: 1.0, gain: 1 },
+  { name: 'pick', k: 0.9, r: 0.3, widthMm: 1, relMs: 0.13, edge: 1.5, holdMs: 3, thetaDeg: 25, noise: 0.015, pos: 1.0, gain: 1 },
   { name: 'flesh', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 40, noise: 0.02, pos: 1.25, gain: 1 },
   { name: 'short nails', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 45, noise: 0.02, pos: 1.1, gain: 1,
     nail: { at: 0.7, relMs: 0.35, click: 0.04 } },
-  { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.15, holdMs: 4, thetaDeg: 50, noise: 0.08, pos: 1.0, gain: 1 },
+  { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.18, edge: 2.5, holdMs: 4, thetaDeg: 50, noise: 0.012, pos: 1.0, gain: 1 },
   { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
 ];
 const HAMMER = 1.12;   // strength of a hammer-on blow, against a pluck at the same velocity
 const PULL_OFF = 0.94; // and of the flick of a pull-off
 const PUSH = 0.1;    // how quickly the hand corrects its speed to have the force ready on time
+const RELEASE = 0.75; // an edge lets go in a time that goes with (0.8 / strength) to this power: 1 if only the stroke's speed set it
 // share of a string's broadband loss that is its own (the rest went to the bridge) when a modelled bridge is attached
 const OWN_LOSS = 0.7;
 const SCALE = 0.648; // scale length in metres, for converting contact widths to samples
@@ -275,7 +288,7 @@ class PluckVoice {
     this.dampGain = 1; this.dampCount = 0;
     this.uV = 0; this.uH = 0;
     // material / config
-    this.openF = 110; this.ratio = 1; this.b1 = 0.6; this.b3 = 6e-7; this.flat = 0;
+    this.openF = 110; this.ratio = 1; this.b1 = 0.6; this.b3 = 6e-7; this.flat = 0; this.dia = 0;
     this.gain = 1; this.mixH = 0.6; this.polDet = 1.0005;
     // note state
     this.freq = 110; this.curFreq = 110; this.sounding = false;
@@ -354,8 +367,9 @@ class PluckVoice {
     this.pkK = pl.k * att * firm * (pm ? 0.8 : 1);
     this.pkR = pl.r;
     // a release slower than a fraction of the period would not excite the string at all
-    const rel = (ms) => clamp(((ms * fs) / 1000 / att) * (1.6 - 0.8 * Math.min(1, vel)), 1.5, 0.2 * N);
-    this.pkRelFrames = rel(pl.relMs);
+    const pace = pl.edge ? Math.pow(0.8 / clamp(vel, 0.3, 1.2), RELEASE) : 1.6 - 0.8 * Math.min(1, vel);
+    const rel = (ms) => clamp(((ms * fs) / 1000 / att) * pace, 1.5, 0.2 * N);
+    this.pkRelFrames = rel(pl.relMs * (pl.edge ? 1 + this.dia / pl.edge : 1));
     this.pkNail = pl.nail ? { at: pl.nail.at, rel: rel(pl.nail.relMs), click: pl.nail.click } : null;
     // thinner / shorter strings carry less energy
     this.pkDmax = vel * pl.gain * (harm ? 1.4 : 1) * (ev.rs ? 1.35 : 1) * clamp(Math.pow(f / 260, -0.38), 0.55, 1.4);
@@ -1045,6 +1059,7 @@ class VibetarEngine {
       v.flat = ((isPair ? pr.pairFlat : pr.flat) || [])[s] || 0;
       const pick = (main, pair) => (isPair ? pr[pair][s] : pr[main][s]);
       v.B = pick('B', 'pairB');
+      v.dia = pick('dia', 'pairDia');
       v.apN = sectionsFor(v.openF, v.B, fs);
       v.apCache.clear();
       v.tmK = pick('tm', 'pairTm') / 1731.2 / pick('tmE', 'pairTmE');
