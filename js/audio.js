@@ -102,7 +102,7 @@ function reverbBuffer(ctx, size, tone) {
 const engineCfg = (inst, song) => ({
   type: 'cfg', preset: inst.preset, open: song.tuning.map((m) => m + song.capo),
   pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain,
-  symp: inst.symp, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise, pick: inst.picking,
+  symp: inst.symp, vibrato: inst.vibrato, fingerNoise: inst.fingerNoise, pick: inst.picking, tune: song.tuning,
 });
 
 class Graph {
@@ -129,6 +129,7 @@ class Graph {
       return conv;
     });
     this.loaded = ''; this.want = ''; this.showing = 'classic'; this.failed = false; this.onNotice = null;
+    this.bridgeData = null; this.last = null;
     this.bodyGain = gain(0.85); this.directGain = gain(0.1);
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 58; hp.Q.value = 0.7;
     this.inst = gain(1);
@@ -184,7 +185,7 @@ class Graph {
 
   loadModel(body, preset) {
     for (let z = 0; z < 4; z++) this.zones[z].buffer = toBuffer(this.ctx, { L: body.irs[2 * z], R: body.irs[2 * z + 1] });
-    this.loaded = preset;
+    this.loaded = preset; this.bridgeData = body.bridge;
   }
 
   // crossfade between the classic and the modelled body
@@ -214,6 +215,7 @@ class Graph {
         getBody(wanted, this.ctx.sampleRate).then((b) => {
           if (this.want !== wanted) return;
           this.loadModel(b, wanted); this.showModel(true, true);
+          this.configureEngine();
         }).catch((err) => {
           console.warn('modelled body unavailable:', err);
           if (!this.failed && this.onNotice) this.onNotice('Using the classic body (the modelled one could not be built)');
@@ -227,7 +229,14 @@ class Graph {
     const lv = LEVELS[inst.preset] || 1.5;
     set(this.bodyGain.gain, (0.35 + 0.65 * b) * lv);
     set(this.directGain.gain, 0.55 * (1 - b) * lv);
-    this.node.port.postMessage(engineCfg(inst, song));
+    this.last = { inst, song };
+    this.configureEngine();
+  }
+
+  // the strings are tied to the modelled bridge exactly while the modelled body is heard
+  configureEngine() {
+    const { inst, song } = this.last;
+    this.node.port.postMessage({ ...engineCfg(inst, song), bridge: this.showing === 'modelled' ? this.bridgeData : null });
   }
 
   setFx(fx, bpm, now) {
@@ -321,7 +330,7 @@ export async function renderSong(song, rnd, sampleRate = 48000) {
   if (song.inst.preset === 'bowed') for (let s = 0; s < 6; s++) events.push({ type: 'o', t: lead + n * stepDur, s });
   const node = new AudioWorkletNode(ctx, 'vibetar-strings', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [4],
-    processorOptions: { cfg: engineCfg(song.inst, song), events },
+    processorOptions: { cfg: { ...engineCfg(song.inst, song), bridge: body ? body.bridge : null }, events },
   });
   const graph = new Graph(ctx, node);
   graph.setInstrument(body ? song.inst : { ...song.inst, bodyModel: 0 }, song, false, body);

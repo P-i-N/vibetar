@@ -514,7 +514,7 @@ function buildSettings() {
   mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed, plucked);
   mkSlider(I, ...inst('vibrato'), 'Vibrato', 0, 2, 0.02, pct, (p) => p === 'bowed');
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
-  mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, plucked);
+  mkSlider(I, ...inst('symp'), 'String coupling', 0, 1, 0.01, pct, plucked);
   mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct, plucked);
   mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms', plucked);
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);

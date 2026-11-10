@@ -123,6 +123,8 @@ const PLUCKERS = [
   { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
 ];
 const PUSH = 0.1;    // how quickly the hand corrects its speed to have the force ready on time
+// share of a string's broadband loss that is its own (the rest went to the bridge) when a modelled bridge is attached
+const OWN_LOSS = 0.7;
 const SCALE = 0.648; // scale length in metres, for converting contact widths to samples
 
 // Contact positions, as distance from the bridge in fractions of the string.
@@ -175,7 +177,8 @@ class PluckVoice {
     this.sqB0 = 0; this.sqA1 = 0; this.sqA2 = 0;
     this.sqX1 = 0; this.sqX2 = 0; this.sqY1 = 0; this.sqY2 = 0; this.sqLp = 0;
     // plucker contact
-    this.sIdx = 0;
+    this.sIdx = 0; this.zone = 0; this.outH = 0;
+    this.bridge = null; this.loopV = 0; this.loopH = 0; this.ownLoss = 0.7;
     this.contact = 0; this.contactFrames = 0; this.releaseFrame = 0; this.strokeFrame = 0;
     this.pkA = 1; this.pkB = 2; this.pkW = 1;
     this.pkK = 0; this.pkR = 0; this.pkRel = false;
@@ -388,6 +391,14 @@ class PluckVoice {
 
   setDamping(f, b1, b3) {
     const fs = this.fs;
+    if (this.bridge) {
+      // the bridge takes what the body takes; only the string's own losses remain here
+      const dv = designDamping(f, b1 * this.ownLoss, b3, fs);
+      this.aV = dv.a; this.gV = dv.g;
+      const dh = designDamping(f * this.polDet, b1 * 0.7, b3 * 0.9, fs);
+      this.aH = dh.a; this.gH = dh.g;
+      return;
+    }
     const dv = designDamping(f, b1 * 1.45, b3, fs);
     this.aV = dv.a;
     this.gV = Math.min(0.99999, dv.g / (1 - this.alpha));
@@ -412,8 +423,10 @@ class PluckVoice {
       apV = this.apN * apDelay(c, w);
       apH = this.apN * apDelay(c, wH);
     }
-    this.tV = Math.max(2.001, fs / f - lpDelay(this.aV, w) - apV);
-    this.tH = Math.max(2.001, fs / fH - lpDelay(this.aH, wH) - apH);
+    // the bridge's give shifts the pitch a little: tune the fundamental for it
+    const br = this.bridge;
+    this.tV = Math.max(2.001, fs / f - lpDelay(this.aV, w) - apV - (br ? br.reflectionDelay(this.loopV, f) : 0));
+    this.tH = Math.max(2.001, fs / fH - lpDelay(this.aH, wH) - apH - (br ? br.reflectionDelay(this.loopH, fH) : 0));
     if (immediate) { this.dV = this.tV; this.dH = this.tH; this.dVinc = 0; this.dHinc = 0; }
   }
 
@@ -589,13 +602,13 @@ class PluckVoice {
     return r;
   }
 
-  tickWrite(vj) {
+  tickWrite(vj, vh = 0) {
     let e = 0;
     if (this.excPos < this.excLen) e = this.exc[this.excPos++];
     let dm = 1;
     if (this.dampCount > 0) { dm = this.dampGain; this.dampCount--; }
     let yv = e * this.excV + (this.uV - vj) * dm;
-    let yh = e * this.excH + this.uH * dm;
+    let yh = e * this.excH + (this.uH - vh) * dm;
     if (yv < 1e-18 && yv > -1e-18) yv = 0;
     if (yh < 1e-18 && yh > -1e-18) yh = 0;
     let sq = 0;
@@ -764,6 +777,130 @@ class BowVoice {
   clear() { this.nb.fill(0); this.bb.fill(0); this.lp = 0; this.nOut = 0; this.bOut = 0; this.env = 0; this.envT = 0; }
 }
 
+// ---- the bridge ---------------------------------------------------------------
+// With a modelled body the strings are not tied to a rigid bridge but to the
+// body's lowest resonances. Every string loop (towards-top and along-top
+// motion of each string) pushes on the bridge at its own point; the bridge
+// moves; that motion goes back into every loop.
+//
+//   mode k:  velocity per unit modal force  s / (s² + ηω s + ω²)   (bilinear, pre-warped)
+//            v_k = b0_k f_k + s1_k
+//   c_ik     how much loop i moves with mode k (phi for towards-top, rock for along-top)
+//   B = C diag(b0) Cᵀ + G       instantaneous bridge mobility (G: the rest of the body, a plate)
+//   bridge velocity  vb = W (2 B Z u + C s1),   W = (I + B Z)⁻¹
+//   force            F  = Z (2u − vb)
+// Solved exactly each sample, and built from positive residues only, so the
+// bridge can absorb energy from the strings but never supply any.
+
+const STANDARD = [40, 45, 50, 55, 59, 64];
+
+class Bridge {
+  constructor(fs) { this.fs = fs; this.n = 0; this.K = 0; }
+
+  // data: { K, f, eta, phi[6 x K], rock[6 x K], z[6], gRes }; voices: plucked voices (6 or 12)
+  configure(data, voices, coupling, tune) {
+    const fs = this.fs, nv = voices.length, n = 2 * nv, K = data.K;
+    this.n = n; this.K = K; this.nv = nv;
+    this.b0 = new Float64Array(K); this.a1 = new Float64Array(K); this.a2 = new Float64Array(K);
+    if (!this.s1 || this.s1.length !== K) { this.s1 = new Float64Array(K); this.s2 = new Float64Array(K); }
+    for (let k = 0; k < K; k++) {
+      const w = TAU * data.f[k], c0 = w / Math.tan(w / (2 * fs));
+      const a0 = c0 * c0 + data.eta[k] * w * c0 + w * w;
+      this.b0[k] = c0 / a0; this.a1[k] = (2 * (w * w - c0 * c0)) / a0; this.a2[k] = (c0 * c0 - data.eta[k] * w * c0 + w * w) / a0;
+    }
+    const C = this.C = new Float64Array(n * K), Z = this.Z = new Float64Array(n), G = this.G = new Float64Array(n);
+    let pp = 0, rr = 0;
+    for (let i = 0; i < 6 * K; i++) { pp += data.phi[i] ** 2; rr += data.rock[i] ** 2; }
+    for (let i = 0; i < nv; i++) {
+      const s = i % 6;
+      // impedance follows the string's tension; the thin octave strings of a 12-string are lighter
+      const z = data.z[s] * coupling * Math.pow(2, ((tune ? tune[s] : STANDARD[s]) - STANDARD[s]) / 12) * (i >= 6 && s < 4 ? 0.55 : 1);
+      Z[i] = z; Z[nv + i] = z;
+      G[i] = data.gRes; G[nv + i] = (data.gRes * rr) / pp;
+      for (let k = 0; k < K; k++) { C[i * K + k] = data.phi[s * K + k]; C[(nv + i) * K + k] = data.rock[s * K + k]; }
+    }
+    // W = (I + B Z)^-1 by Gauss-Jordan
+    const B = new Float64Array(n * n), A = new Float64Array(n * 2 * n);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      let b = i === j ? G[i] : 0;
+      for (let k = 0; k < K; k++) b += C[i * K + k] * this.b0[k] * C[j * K + k];
+      B[i * n + j] = b;
+      A[i * 2 * n + j] = (i === j ? 1 : 0) + b * Z[j];
+      A[i * 2 * n + n + j] = i === j ? 1 : 0;
+    }
+    for (let c = 0; c < n; c++) {
+      let piv = c;
+      for (let r = c + 1; r < n; r++) if (Math.abs(A[r * 2 * n + c]) > Math.abs(A[piv * 2 * n + c])) piv = r;
+      if (piv !== c) for (let j = 0; j < 2 * n; j++) { const t = A[c * 2 * n + j]; A[c * 2 * n + j] = A[piv * 2 * n + j]; A[piv * 2 * n + j] = t; }
+      const d = A[c * 2 * n + c];
+      for (let j = 0; j < 2 * n; j++) A[c * 2 * n + j] /= d;
+      for (let r = 0; r < n; r++) {
+        if (r === c) continue;
+        const m = A[r * 2 * n + c];
+        if (m !== 0) for (let j = 0; j < 2 * n; j++) A[r * 2 * n + j] -= m * A[c * 2 * n + j];
+      }
+    }
+    // vb = A1 u + A2 s1
+    const A1 = this.A1 = new Float64Array(n * n), A2 = this.A2 = new Float64Array(n * K);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        let v = 0;
+        for (let m = 0; m < n; m++) v += A[i * 2 * n + n + m] * B[m * n + j];
+        A1[i * n + j] = 2 * v * Z[j];
+      }
+      for (let k = 0; k < K; k++) {
+        let v = 0;
+        for (let m = 0; m < n; m++) v += A[i * 2 * n + n + m] * C[m * K + k];
+        A2[i * K + k] = v;
+      }
+    }
+    this.u = new Float64Array(n); this.vb = new Float64Array(n); this.fk = new Float64Array(K);
+  }
+
+  // u: the waves arriving at the bridge; returns the bridge velocity each loop sees
+  step() {
+    const n = this.n, K = this.K, u = this.u, vb = this.vb, A1 = this.A1, A2 = this.A2, C = this.C, Z = this.Z, s1 = this.s1, s2 = this.s2, fk = this.fk;
+    fk.fill(0);
+    for (let i = 0; i < n; i++) {
+      let v = 0, o = i * n;
+      for (let j = 0; j < n; j++) v += A1[o + j] * u[j];
+      o = i * K;
+      for (let k = 0; k < K; k++) v += A2[o + k] * s1[k];
+      vb[i] = v;
+      const F = Z[i] * (2 * u[i] - v);
+      for (let k = 0; k < K; k++) fk[k] += C[o + k] * F;
+    }
+    for (let k = 0; k < K; k++) {
+      const f = fk[k], y = this.b0[k] * f + s1[k];
+      let a = s2[k] - this.a1[k] * y, b = -this.b0[k] * f - this.a2[k] * y;
+      if (a < 1e-30 && a > -1e-30) a = 0;
+      if (b < 1e-30 && b > -1e-30) b = 0;
+      s1[k] = a; s2[k] = b;
+    }
+    return vb;
+  }
+
+  // phase delay (samples) of the reflection a single loop sees at frequency f, so notes can be tuned for it
+  reflectionDelay(loop, f) {
+    const w = (TAU * f) / this.fs, K = this.K, c1 = Math.cos(w), s1 = -Math.sin(w), c2 = Math.cos(2 * w), s2 = -Math.sin(2 * w);
+    let yr = this.G[loop], yi = 0;
+    for (let k = 0; k < K; k++) {
+      const c = this.C[loop * K + k], g = c * c * this.b0[k];
+      if (g === 0) continue;
+      const nr = 1 - c2, ni = -s2;                                    // 1 - z^-2
+      const dr = 1 + this.a1[k] * c1 + this.a2[k] * c2, di = this.a1[k] * s1 + this.a2[k] * s2;
+      const den = dr * dr + di * di;
+      yr += (g * (nr * dr + ni * di)) / den; yi += (g * (ni * dr - nr * di)) / den;
+    }
+    const z = this.Z[loop];
+    // R = (1 - zY) / (1 + zY)
+    const ar = 1 - z * yr, ai = -z * yi, br = 1 + z * yr, bi = z * yi;
+    return -(Math.atan2(ai, ar) - Math.atan2(bi, br)) / w;
+  }
+
+  clear() { if (this.s1) { this.s1.fill(0); this.s2.fill(0); } }
+}
+
 // ---- engine ----------------------------------------------------------------
 
 class VibetarEngine {
@@ -778,6 +915,7 @@ class VibetarEngine {
     this.alpha = 0;
     this.dcx = new Float64Array(4); this.dcy = new Float64Array(4);
     this.mixH = 0.6;
+    this.bridge = null; this.bridgeData = null; this.coupling = 0.3; this.tune = null;
     this.dcR = 1 - (TAU * 18) / fs;
     this.outGain = 0.3;
     this.pairGap = Math.round(0.011 * fs);
@@ -802,6 +940,9 @@ class VibetarEngine {
     this.mode = pr.mode;
     this.mixH = pr.mixH || 0;
     const nPair = pr.pair ? 6 : 0;
+    if ('bridge' in c) this.bridgeData = c.bridge || null;
+    if (c.tune) this.tune = c.tune;
+    if (c.symp != null) this.coupling = clamp(c.symp, 0, 1);
     this.alpha = this.mode === 'pluck' ? clamp(c.symp != null ? c.symp : 0.3, 0, 1) * 0.0035 : 0;
     if (rebuild) {
       this.preset = c.preset;
@@ -836,8 +977,21 @@ class VibetarEngine {
         // longitudinal resonance that colours the finger noise
         const w0 = (TAU * (1500 + 330 * s)) / fs, al = Math.sin(w0) / 5;
         v.sqB0 = al / (1 + al); v.sqA1 = (-2 * Math.cos(w0)) / (1 + al); v.sqA2 = (1 - al) / (1 + al);
-        if (rebuild || !v.sounding) v.rest();
       }
+    }
+    // tie the strings to the modelled body's bridge, if there is one
+    const bridged = this.mode === 'pluck' && !!this.bridgeData;
+    if (bridged) {
+      if (!this.bridge) this.bridge = new Bridge(fs);
+      this.bridge.configure(this.bridgeData, this.voices, this.coupling, this.tune);
+    } else this.bridge = null;
+    for (let i = 0; i < this.voices.length; i++) {
+      const v = this.voices[i];
+      if (this.mode !== 'pluck') continue;
+      v.bridge = this.bridge; v.loopV = i; v.loopH = this.voices.length + i;
+      // with less coupling the string keeps more of the loss a rigid bridge would have given it
+      v.ownLoss = OWN_LOSS + (1 - this.coupling) * (1.45 - OWN_LOSS);
+      if (rebuild || !v.sounding) v.rest();
     }
   }
 
@@ -883,6 +1037,7 @@ class VibetarEngine {
         break;
       case 'R':
         for (const v of vs) { v.clear(); v.rest(); }
+        if (this.bridge) this.bridge.clear();
         break;
     }
   }
@@ -920,14 +1075,21 @@ class VibetarEngine {
           if (four) { o1[i] = 0; o2[i] = 0; o3[i] = 0; }
         }
       } else {
-        const alpha = this.alpha, g = this.outGain;
+        const alpha = this.alpha, g = this.outGain, br = this.bridge;
         for (; i < end; i++) {
-          let sum = 0;
-          for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
-          const vj = sum * alpha;
+          let vj = 0, vb = null;
+          if (br) {
+            const u = br.u;
+            for (let k = 0; k < nv; k++) { u[k] = vs[k].tickRead(); u[nv + k] = vs[k].uH; }
+            vb = br.step();
+          } else {
+            let sum = 0;
+            for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
+            vj = sum * alpha;
+          }
           let a = 0, b = 0, c = 0, h = 0;
           for (let k = 0; k < nv; k++) {
-            const v = vs[k], x = v.tickWrite(vj);
+            const v = vs[k], x = vb ? v.tickWrite(vb[k], vb[nv + k]) : v.tickWrite(vj);
             if (v.zone === 0) a += x; else if (v.zone === 1) b += x; else c += x;
             h += v.outH;
           }
