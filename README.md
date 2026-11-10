@@ -19,6 +19,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb with spaces from a small room to a cathedral, and tempo-synced ping-pong delay
 - MIDI file import (menu, or drop a `.mid` on the page): every track but the drums, quantised to the grid that fits, on frets chosen so the hand moves as little as possible ([js/midi.js](js/midi.js))
+- 15 demo songs ([js/demos.js](js/demos.js)): traditional tunes, Beethoven, Pachelbel and originals, which between them use every instrument, picking technique, technique mark, tuning, grid and reverb space
 - Share by link, WAV export, no account, no server
 
 ## How the sound is made
@@ -64,10 +65,10 @@ python3 -m http.server 8765
 
 Then open http://localhost:8765/.
 
-The string engine, the body model, the song format and the MIDI import have offline tests (Node 22+, no packages; about 40 s, most of it building bodies):
+The string engine, the body model, the song format, the demos and the MIDI import have offline tests (Node 22+, no packages; about 90 s, most of it building bodies and rendering the demos):
 
 ```bash
-node --test test/
+node --test "test/*.test.mjs"
 ```
 
 ## License

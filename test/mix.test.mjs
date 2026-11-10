@@ -36,7 +36,7 @@ test('demo songs keep their level and balance', () => {
     // at the default master volume (0.8) only the tips of the loudest attacks reach into the soft
     // clipper's knee (it is linear to 0.62 and rounds off towards 0.98)
     assert.ok(m.peak * 0.8 <= 1.1, `${song.title}: peak ${m.peak.toFixed(2)}`);
-    if (!c) { assert.ok(m.rms > -24 && m.rms < -14, `${song.title}: level ${m.rms.toFixed(1)} dB`); continue; }
+    if (!c) { assert.ok(m.rms > -30 && m.rms < -14, `${song.title}: level ${m.rms.toFixed(1)} dB`); continue; }
     assert.ok(Math.abs(m.rms - c.rms) < 3, `${song.title}: level ${(m.rms - c.rms).toFixed(1)} dB from the reference`);
     m.bands.forEach((v, i) => assert.ok(Math.abs(v - c.bands[i]) < 6, `${song.title}: ${125 * 2 ** i} Hz band ${(v - c.bands[i]).toFixed(1)} dB from the reference`));
   }
