@@ -509,7 +509,7 @@ function buildSettings() {
   const inst = (k) => [() => song.inst[k], (v) => { song.inst[k] = v; audio.syncInstrument(); }];
   const plucked = (p) => p !== 'bowed';
   mkSlider(I, ...inst('pickPos'), (p) => (p === 'bowed' ? 'Bow position' : 'Pick position'), 0.06, 0.4, 0.005, pct);
-  mkSlider(I, ...inst('pickHard'), (p) => (p === 'bowed' ? 'Bow pressure' : p === 'nylon' ? 'Nail attack' : 'Pick hardness'), 0, 1, 0.01, pct);
+  mkSlider(I, ...inst('pickHard'), (p) => (p === 'bowed' ? 'Bow pressure' : 'Attack'), 0, 1, 0.01, pct);
   mkSlider(I, ...inst('bright'), 'Brightness', -1, 1, 0.02, signed, plucked);
   mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed, plucked);
   mkSlider(I, ...inst('vibrato'), 'Vibrato', 0, 2, 0.02, pct, (p) => p === 'bowed');
@@ -535,6 +535,12 @@ function buildSettings() {
     const b = e.target.closest('button');
     if (!b) return;
     song.fx.dlyTime = b.dataset.v; syncFxControls(); fxChanged(); scheduleSave();
+  });
+  $('picking').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    song.inst.picking = +b.dataset.v; syncInstControls(); audio.syncInstrument(); scheduleSave();
+    preview(cur.s, S.getCell(song, cur.step, cur.s) || { f: 0, t: '' });
   });
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -572,6 +578,8 @@ function buildSettings() {
 
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
+  $('picking').hidden = song.inst.preset === 'bowed';
+  for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
   for (const r of sliders) r();
 }
 function syncFxControls() {

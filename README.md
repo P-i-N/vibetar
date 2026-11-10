@@ -14,6 +14,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Natural harmonics, written `<12>`
 - Fingers you can hear: squeaks on position shifts and slides, notes that die when a finger lets go
 - Four instruments: steel-string, nylon, 12-string and bowed strings
+- Five picking techniques: pick, bare fingers, short nails, long nails, hybrid
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb and tempo-synced ping-pong delay
 - Share by link, WAV export, no account, no server
@@ -25,7 +26,8 @@ Nothing is sampled. Everything is computed live in an `AudioWorklet` ([js/workle
 - **Strings** are digital waveguides. Each string has two transverse polarisations with slightly different tuning and decay, which gives the beating and two-stage decay of a real string.
 - **Damping** follows a physical loss model `σ(f) = b1 + b3·f²` that is fitted per note, with separate material constants for wound and plain steel and for nylon. Fretted notes, palm mutes and dead notes change the losses, not a volume envelope.
 - **Stiffness** of the wound strings is modelled with an allpass dispersion chain, so their overtones are slightly stretched.
-- **Plucking** injects an ideal-pluck velocity pulse. Its length comes from the picking position, its edges from pick hardness and pluck strength — harder plucks are brighter, not just louder.
+- **Plucking** is a short contact at the plucking point: a pick, fingertip or nail travels across the string, pushing it aside through a spring and damper until it can hold no more, then the string slides off. Stiffness, contact width (in millimetres, so a fingertip dulls a bass string more than a treble), release time and stroke angle are what tell a pick from flesh from a nail. The contact also damps whatever the string was doing, so re-plucking a ringing string sounds different from plucking a silent one.
+- **The performer** decides who plays each note: the thumb takes the bass strings, index and middle alternate, a pick alternates in runs and comes down on the beat, accents are rest strokes. Timing, loudness and plucking point drift slowly instead of jittering note by note.
 - **The bridge** is a passive scattering junction shared by all strings, so open strings ring in sympathy.
 - **Hands on the strings** are contact points: lossy junctions at a position along the string that absorb and reflect part of the passing wave, and can never add energy. A fingertip resting above the 12th fret leaves only the partials with a node there — a natural harmonic. The edge of the palm near the bridge gives palm muting, the fretting hand lying across the strings a dead note, and a finger letting go of a fret stops the note.
 - **Finger travel**: when the hand has to move along the neck, the finger rides the string. On wound strings that is a pulse train (one pulse per winding, so its pitch follows the finger speed) coloured by the string's longitudinal resonance; plain strings only hiss.
