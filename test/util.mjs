@@ -134,14 +134,13 @@ export function aLevel(x, start, n, fs = FS) {
 
 // ---- a whole song through the instrument (no reverb, delay or master) -------------
 import * as Song from '../js/song.js';
-import { makeBodyIR } from '../js/ir.js';
-import { LEVELS, MIX_H, MODEL_TRIM } from '../js/audio.js';
+import { LEVELS, MIX_H } from '../js/audio.js';
 
-// the instrument bus signal (left microphone) of a song, on the modelled or the classic body
-export function renderMix(song, modelled) {
-  const inst = song.inst, body = modelled ? cachedBody(inst.preset) : null;
+// the instrument bus signal (left microphone) of a song
+export function renderMix(song) {
+  const inst = song.inst, body = cachedBody(inst.preset);
   const e = new VibetarEngine(FS);
-  e.configure({ preset: inst.preset, open: song.tuning.map((m) => m + song.capo), tune: song.tuning, pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain, symp: inst.symp, coupling: inst.coupling, fingerNoise: inst.fingerNoise, pick: inst.picking, bridge: body ? body.bridge : null });
+  e.configure({ preset: inst.preset, open: song.tuning.map((m) => m + song.capo), tune: song.tuning, pickPos: inst.pickPos, pickHard: inst.pickHard, bright: inst.bright, sustain: inst.sustain, coupling: inst.coupling, fingerNoise: inst.fingerNoise, pick: inst.picking, bridge: body.bridge });
   const perf = Song.newPerformer(1);
   const n = Song.totalSteps(song), stepDur = 60 / song.bpm / song.spb;
   for (const ev of Song.songEvents(song, 0, n, 0.05, perf.rnd, perf)) e.post(ev);
@@ -150,11 +149,8 @@ export function renderMix(song, modelled) {
   const b = Math.max(0, Math.min(1, inst.body)), lv = LEVELS[inst.preset];
   const mono = new Float32Array(len);
   for (let i = 0; i < len; i++) mono[i] = ch[0][i] + ch[1][i] + ch[2][i] + MIX_H[inst.preset] * (ch[3][i] + ch[4][i] + ch[5][i]);
-  let wet;
-  if (body) {
-    wet = new Float64Array(len + body.irs[0].length);
-    for (let z = 0; z < 6; z++) { const y = convolve(ch[z], body.irs[2 * z]); for (let i = 0; i < wet.length; i++) wet[i] += y[i] * MODEL_TRIM[inst.preset]; }
-  } else wet = convolve(mono, makeBodyIR(FS, inst.preset).L);
+  const wet = new Float64Array(len + body.irs[0].length);
+  for (let z = 0; z < 6; z++) { const y = convolve(ch[z], body.irs[2 * z]); for (let i = 0; i < wet.length; i++) wet[i] += y[i]; }
   const out = new Float64Array(len);
   for (let i = 0; i < len; i++) out[i] = wet[i] * (0.35 + 0.65 * b) * lv + mono[i] * 0.55 * (1 - b) * lv;
   return out;

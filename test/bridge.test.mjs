@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { FS, OPEN, midiHz, spectrum, peakNear, db, rms, peak, engine, render, cachedBody, convolve, aLevel } from './util.mjs';
 
 const coupled = (cfg = {}, fs = FS, name = 'steel') => engine({ preset: name, bridge: cachedBody(name, fs).bridge, coupling: 1, ...cfg }, fs);
-const classic = (cfg = {}) => engine({ bridge: null, ...cfg });
+const rigid = (cfg = {}) => engine({ bridge: null, ...cfg });
 const pluck = (e, s, fret, t = 0.02, open = OPEN) => e.post({ type: 'n', t, s, f: midiHz(open[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1 });
 const energy = (v) => { let e = 0; for (let i = 0; i < v.bv.length; i++) e += v.bv[i] ** 2 + v.bh[i] ** 2; return e; };
 // seconds until the level has fallen by `drop` dB from its value shortly after the attack
@@ -74,7 +74,7 @@ test('a note on the main top resonance loses its fundamental faster than its nei
   const on = t(m0), near = (t(m0 - 3) + t(m0 + 3)) / 2;
   assert.ok(on < 0.5 * near, `on the resonance ${on.toFixed(2)} s, neighbours ${near.toFixed(2)} s`);
   // and without the bridge there is no such difference
-  const u = (m) => { const e = classic(); e.post({ type: 'n', t: 0.02, s: 2, f: midiHz(m), v: 0.8, k: '', fr: true, d: 1 }); return partialDecay(render(e, 4), midiHz(m), 6); };
+  const u = (m) => { const e = rigid(); e.post({ type: 'n', t: 0.02, s: 2, f: midiHz(m), v: 0.8, k: '', fr: true, d: 1 }); return partialDecay(render(e, 4), midiHz(m), 6); };
   assert.ok(u(m0) > 0.8 * (u(m0 - 3) + u(m0 + 3)) / 2);
 });
 
@@ -101,7 +101,7 @@ test('two-stage decay: towards-top motion dies faster than along-top motion', ()
   assert.ok(rateV > 1.5 * rateH, `towards-top ${rateV.toFixed(2)}, along-top ${rateH.toFixed(2)} (nepers of energy per second)`);
 });
 
-// (sustain against the classic body is checked on the heard signal, in heard.test.mjs)
+// (sustain is checked on the heard signal, in heard.test.mjs)
 
 test('works at 44.1 kHz, in drop D and with a capo', () => {
   const N = 1 << 16;
@@ -141,7 +141,7 @@ test('note loudness across the range is more even once the strings feel the brid
     const mean = lv.reduce((a, c) => a + c) / lv.length;
     return Math.sqrt(lv.reduce((a, c) => a + (c - mean) ** 2, 0) / lv.length);
   };
-  const withBridge = spread(() => coupled()), without = spread(() => classic());
+  const withBridge = spread(() => coupled()), without = spread(() => rigid());
   assert.ok(withBridge < without, `coupled ${withBridge.toFixed(2)} dB, uncoupled ${without.toFixed(2)} dB`);
   assert.ok(withBridge <= 4.0, `standard deviation ${withBridge.toFixed(2)} dB`);
 });

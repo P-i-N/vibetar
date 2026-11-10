@@ -146,7 +146,6 @@ test('above the modelled modes the bridge looks like a plate of the top\'s stiff
 });
 
 // ---- what the microphones hear ---------------------------------------------------
-import { makeBodyIR } from '../js/ir.js';
 import { MODEL_VERSION } from '../js/body/model.js';
 import { FS, OPEN, midiHz, db, engine, render, cachedBody, convolve, rawSpectrum, aLevel } from './util.mjs';
 
@@ -170,16 +169,6 @@ function thirdOctaves(h, lo, hi, fs = FS) {
   }
   return out;
 }
-
-test('the classic body is unchanged', () => {
-  const ir = makeBodyIR(48000, 'steel');
-  let s = 0;
-  for (let i = 0; i < ir.L.length; i++) s += Math.abs(ir.L[i]);
-  assert.equal(ir.L.length, 20160);
-  assert.ok(Math.abs(s - 10.9627521629) < 1e-8, `checksum ${s}`);
-  assert.equal(ir.L[100], -0.004665404558181763);
-  assert.equal(ir.R[1000], 0.0007459166226908565);
-});
 
 test('the body builds within the time budget and reports its resonances', () => {
   const b = cachedBody('steel');

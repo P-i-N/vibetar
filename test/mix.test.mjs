@@ -20,22 +20,27 @@ function stats(x) {
   return { peak: pk, rms: db(Math.sqrt(s / x.length)), bands: Array.from(acc, (v) => 10 * Math.log10(v / frames)) };
 }
 
-test('demo songs keep their level and balance on the modelled body', () => {
+// Level (dB) and octave bands 125 Hz - 4 kHz of these demos as the earlier, hand-tuned body
+// played them: the reference the body model was calibrated to.
+const REFERENCE = {
+  'First Light': { rms: -18.3, bands: [54.7, 62.9, 56.3, 53.9, 45.2, 39.7] },
+  'Romance (trad.)': { rms: -18.1, bands: [57.1, 61.9, 57.6, 52, 42.8, 21.5] },
+  'Campfire': { rms: -18.4, bands: [57.3, 59.9, 58.7, 57.3, 51.2, 42.5] },
+  'Night Drive': { rms: -19.2, bands: [55.3, 62.2, 53, 51.5, 43.6, 39] },
+};
+
+test('demo songs keep their level and balance', () => {
   for (const d of S.DEMOS) {
-    const song = d.make();
-    const c = stats(renderMix(song, false)), m = stats(renderMix(song, true));
-    assert.ok(Math.abs(m.rms - c.rms) < 3, `${song.title}: level ${(m.rms - c.rms).toFixed(1)} dB from classic`);
+    const song = d.make(), m = stats(renderMix(song)), c = REFERENCE[song.title];
     // at the default master volume (0.8) only the tips of the loudest attacks reach into the soft
     // clipper's knee (it is linear to 0.62 and rounds off towards 0.98)
     assert.ok(m.peak * 0.8 <= 1.1, `${song.title}: peak ${m.peak.toFixed(2)}`);
-    m.bands.forEach((v, i) => assert.ok(Math.abs(v - c.bands[i]) < 6, `${song.title}: ${125 * 2 ** i} Hz band ${(v - c.bands[i]).toFixed(1)} dB from classic`));
+    if (!c) { assert.ok(m.rms > -24 && m.rms < -14, `${song.title}: level ${m.rms.toFixed(1)} dB`); continue; }
+    assert.ok(Math.abs(m.rms - c.rms) < 3, `${song.title}: level ${(m.rms - c.rms).toFixed(1)} dB from the reference`);
+    m.bands.forEach((v, i) => assert.ok(Math.abs(v - c.bands[i]) < 6, `${song.title}: ${125 * 2 ** i} Hz band ${(v - c.bands[i]).toFixed(1)} dB from the reference`));
   }
 });
 
-test('new songs start on the modelled body; the classic junction keeps its old strength', () => {
-  for (const name of ['steel', 'nylon', 'twelve']) {
-    assert.equal(S.INSTRUMENTS[name].bodyModel, 1);
-    assert.equal(S.INSTRUMENTS[name].symp, 0.3);
-    assert.ok(S.INSTRUMENTS[name].coupling > 0 && S.INSTRUMENTS[name].coupling <= 1);
-  }
+test('instruments start with a string coupling below the computed value', () => {
+  for (const name of ['steel', 'nylon', 'twelve']) assert.ok(S.INSTRUMENTS[name].coupling > 0 && S.INSTRUMENTS[name].coupling <= 1);
 });

@@ -360,7 +360,7 @@ function barOp(op) {
 
 async function preview(s, cell) {
   if (!cell || cell.f === '.' || player.playing) return;
-  await audio.init();
+  await ready();
   const t = audio.time + 0.02;
   const evs = [S.cellEvent(song, s, { f: cell.f, t: (cell.t || '').replace(/[hs]/g, '') }, t, 0.8, 1)];
   audio.send(evs);
@@ -377,8 +377,20 @@ function playRange() {
   return [0, S.totalSteps(song)];
 }
 
-async function play(fromTop) {
+// The audio context, and the body of the current instrument (about two seconds to build the
+// first time it is used in this browser).
+async function ready() {
   await audio.init();
+  let shown = false;
+  const t = setTimeout(() => { shown = true; toast('Building the guitar body…', 15000); }, 250);
+  await audio.bodyReady();
+  clearTimeout(t);
+  if (shown) toast('Ready', 900);
+  audio.prefetch(Object.keys(S.INSTRUMENTS));
+}
+
+async function play(fromTop) {
+  await ready();
   if (player.playing) stop(true);
   const [from, to] = playRange();
   const bar = S.stepsPerBar(song);
@@ -510,9 +522,7 @@ function buildSettings() {
   mkSlider(I, ...inst('bright'), 'Brightness', -1, 1, 0.02, signed);
   mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed);
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
-  // how strongly strings feel each other: through the modelled bridge, or the classic body's simple junction
-  mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct, (p, i) => !!i.bodyModel);
-  mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, (p, i) => !i.bodyModel);
+  mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct);
   mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct);
   mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms');
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
@@ -539,11 +549,6 @@ function buildSettings() {
     if (!b) return;
     song.inst.picking = +b.dataset.v; syncInstControls(); audio.syncInstrument(); scheduleSave();
     preview(cur.s, S.getCell(song, cur.step, cur.s) || { f: 0, t: '' });
-  });
-  $('bodyModel').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    song.inst.bodyModel = +b.dataset.v; syncInstControls(); audio.syncInstrument(); scheduleSave();
   });
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -579,7 +584,6 @@ function buildSettings() {
 
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
-  for (const b of $('bodyModel').children) b.classList.toggle('on', +b.dataset.v === (song.inst.bodyModel ? 1 : 0));
   for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
   for (const r of sliders) r();
 }

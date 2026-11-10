@@ -9,8 +9,9 @@
 //   * an ideal-pluck excitation: a band-limited rectangular velocity pulse
 //     whose length is set by the picking position and whose edges are set by
 //     pick hardness / pluck strength
-//   * a passive bridge junction that couples all strings -> sympathetic
-//     resonance
+//   * a modal bridge: the strings drive the body's lowest resonances and feel
+//     them back -> sympathetic resonance, two-stage decay, wolf notes
+//     (without body data the bridge is rigid)
 //   * finger / palm contact points: lossy scattering junctions on the string
 //     that produce natural harmonics, palm muting, dead notes and string stops
 //   * friction noise of fingers travelling along the (wound) strings
@@ -73,7 +74,7 @@ const PRESETS = {
     gain: [1.0, 1.0, 0.98, 0.94, 0.9, 0.86],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     // the strings' own loss per string when tied to the modelled bridge, trimmed so that the
-    // sustain heard through the body stays where the classic body had it
+    // sustain heard through the body matches the reference in test/heard.test.mjs
     tied: [1, 1, 1, 0.6, 1.2, 1.2],
   },
   nylon: {
@@ -158,7 +159,7 @@ class PluckVoice {
     this.uV = 0; this.uH = 0;
     // material / config
     this.openF = 110; this.ratio = 1; this.b1 = 0.6; this.b3 = 6e-7;
-    this.gain = 1; this.mixH = 0.6; this.polDet = 1.0005; this.alpha = 0;
+    this.gain = 1; this.mixH = 0.6; this.polDet = 1.0005;
     // note state
     this.freq = 110; this.curFreq = 110; this.sounding = false;
     this.gFrom = 0; this.gT0 = 0; this.gDur = 0.1; this.gStep = false;
@@ -400,8 +401,7 @@ class PluckVoice {
       return;
     }
     const dv = designDamping(f, b1 * 1.45, b3, fs);
-    this.aV = dv.a;
-    this.gV = Math.min(0.99999, dv.g / (1 - this.alpha));
+    this.aV = dv.a; this.gV = dv.g;
     const dh = designDamping(f * this.polDet, b1 * 0.7, b3 * 0.9, fs);
     this.aH = dh.a; this.gH = dh.g;
   }
@@ -788,7 +788,6 @@ class VibetarEngine {
     this.voices = [];
     this.pairs = null;
     this.preset = '';
-    this.alpha = 0;
     this.dcx = new Float64Array(6); this.dcy = new Float64Array(6);
     this.mixH = 0.6; this.acc = new Float64Array(6);
     this.bridge = null; this.bridgeData = null; this.coupling = 1; this.tune = null;
@@ -799,7 +798,7 @@ class VibetarEngine {
     this.configure({ preset: 'steel', open: [40, 45, 50, 55, 59, 64] });
   }
 
-  // c: { preset, open:[midi x6], pickPos, pickHard, bright, sustain, symp }
+  // c: { preset, open:[midi x6], tune, pickPos, pickHard, bright, sustain, coupling, fingerNoise, pick, bridge }
   configure(c) {
     const pr = PRESETS[c.preset] || PRESETS.steel;
     const fs = this.fs;
@@ -818,7 +817,6 @@ class VibetarEngine {
     if ('bridge' in c) this.bridgeData = c.bridge || null;
     if (c.tune) this.tune = c.tune;
     if (c.coupling != null) this.coupling = clamp(c.coupling, 0, 1);
-    this.alpha = clamp(c.symp != null ? c.symp : 0.3, 0, 1) * 0.0035;
     if (rebuild) {
       this.preset = c.preset;
       this.voices = [];
@@ -843,7 +841,6 @@ class VibetarEngine {
       v.mixH = pr.mixH;
       const cents = pr.polCents * (0.7 + 0.6 * ((s * 7 + (isPair ? 3 : 0)) % 5) / 4) * (s % 2 ? -1 : 1);
       v.polDet = Math.pow(2, cents / 1200);
-      v.alpha = this.alpha;
       v.wound = !isPair && s < (pr.wound || 0);
       v.sIdx = s; v.zone = s >> 1;
       // longitudinal resonance that colours the finger noise
@@ -938,21 +935,17 @@ class VibetarEngine {
       while (q.length && q[0].frame <= frame0 + i) this.handle(q.shift(), frame0 + i);
       let end = n;
       if (q.length) { const e = q[0].frame - frame0; if (e < end) end = e; }
-      const alpha = this.alpha, g = this.outGain, br = this.bridge;
+      const g = this.outGain, br = this.bridge;
       for (; i < end; i++) {
-        let vj = 0, vb = null;
+        let vb = null;
         if (br) {
           const u = br.u;
           for (let k = 0; k < nv; k++) { u[k] = vs[k].tickRead(); u[nv + k] = vs[k].uH; }
           vb = br.step();
-        } else {
-          let sum = 0;
-          for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
-          vj = sum * alpha;
-        }
+        } else for (let k = 0; k < nv; k++) vs[k].tickRead();
         acc[0] = acc[1] = acc[2] = acc[3] = acc[4] = acc[5] = 0;
         for (let k = 0; k < nv; k++) {
-          const v = vs[k], x = vb ? v.tickWrite(vb[k], vb[nv + k]) : v.tickWrite(vj);
+          const v = vs[k], x = vb ? v.tickWrite(vb[k], vb[nv + k]) : v.tickWrite(0);
           acc[v.zone] += x; acc[3 + v.zone] += v.outH;
         }
         let mono = 0;

@@ -1,34 +1,31 @@
 // What reaches the listener: the engine's bridge-zone channels through the body's responses.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeBodyIR } from '../js/ir.js';
-import { MIX_H } from '../js/audio.js';
 import { INSTRUMENTS } from '../js/song.js';
 import { FS, OPEN, midiHz, fft, db, engine, cachedBody } from './util.mjs';
 
 const NAMES = ['steel', 'nylon', 'twelve'];
 const spectra = new Map();
 // FFT of every response of an instrument's body (left microphone), for n-point frames
-function responses(name, n, modelled) {
-  const key = `${name}:${n}:${modelled}`;
+function responses(name, n) {
+  const key = `${name}:${n}`;
   if (!spectra.has(key)) {
-    const irs = modelled ? [0, 1, 2, 3, 4, 5].map((c) => cachedBody(name).irs[2 * c]) : [makeBodyIR(FS, name).L];
+    const irs = [0, 1, 2, 3, 4, 5].map((c) => cachedBody(name).irs[2 * c]);
     spectra.set(key, irs.map((h) => { const re = new Float64Array(n), im = new Float64Array(n); re.set(h.subarray(0, Math.min(n, h.length))); fft(re, im); return { re, im }; }));
   }
   return spectra.get(key);
 }
-function play(name, modelled, s, fret, secs, cfg = {}) {
-  const e = engine({ preset: name, bridge: modelled ? cachedBody(name).bridge : null, coupling: INSTRUMENTS[name].coupling, symp: INSTRUMENTS[name].symp, ...cfg });
+function play(name, s, fret, secs, cfg = {}) {
+  const e = engine({ preset: name, bridge: cachedBody(name).bridge, coupling: INSTRUMENTS[name].coupling, ...cfg });
   e.post({ type: 'n', t: 0.02, s, f: midiHz(OPEN[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1 });
   const len = Math.floor((secs * FS) / 128) * 128, ch = [0, 1, 2, 3, 4, 5].map(() => new Float32Array(len));
   for (let i = 0; i < len; i += 128) e.render(ch.map((c) => c.subarray(i, i + 128)), 128, i);
   return ch;
 }
 // spectrum of what is heard in the n samples from `start` (Hann window)
-function heardSpectrum(name, modelled, ch, start, n) {
-  const H = responses(name, n, modelled), outR = new Float64Array(n), outI = new Float64Array(n);
-  const srcs = modelled ? ch : [ch[0].map((v, i) => v + ch[1][i] + ch[2][i] + MIX_H[name] * (ch[3][i] + ch[4][i] + ch[5][i]))];
-  srcs.forEach((x, c) => {
+function heardSpectrum(name, ch, start, n) {
+  const H = responses(name, n), outR = new Float64Array(n), outI = new Float64Array(n);
+  ch.forEach((x, c) => {
     const re = new Float64Array(n), im = new Float64Array(n);
     for (let i = 0; i < n; i++) re[i] = (x[start + i] || 0) * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n));
     fft(re, im);
@@ -43,7 +40,7 @@ function heardSpectrum(name, modelled, ch, start, n) {
 // located before the body's response and then rated by how loud the body makes them.
 function heardCents(name, s, fret, cfg) {
   const n = 32768, f = midiHz(OPEN[s] + fret), b0 = Math.round((f * n) / FS), st = Math.floor(0.05 * FS);
-  const ch = play(name, true, s, fret, 0.75, cfg), H = responses(name, n, true);
+  const ch = play(name, s, fret, 0.75, cfg), H = responses(name, n);
   const R = new Float64Array(n), I = new Float64Array(n);
   ch.forEach((x, c) => {
     const re = new Float64Array(n), im = new Float64Array(n);
@@ -85,18 +82,26 @@ test('heard through the modelled body, notes are in tune at the default coupling
 });
 
 // seconds until the heard level has fallen 20 dB from its level shortly after the attack
-function heardDecay(name, modelled, s, fret) {
-  const n = 8192, ch = play(name, modelled, s, fret, 6);
-  const lv = (t) => { const m = heardSpectrum(name, modelled, ch, Math.floor(t * FS), n); let e = 0; for (let b = 8; b < n / 2; b++) e += m[b] * m[b]; return 10 * Math.log10(e); };
+function heardDecay(name, s, fret) {
+  const n = 8192, ch = play(name, s, fret, 6);
+  const lv = (t) => { const m = heardSpectrum(name, ch, Math.floor(t * FS), n); let e = 0; for (let b = 8; b < n / 2; b++) e += m[b] * m[b]; return 10 * Math.log10(e); };
   const ref = lv(0.06);
   for (let t = 0.15; t < 5.8; t += 0.05) if (lv(t) < ref - 20) return t;
   return 5.8;
 }
 
-test('heard sustain per string stays within 30 % of the classic body', () => {
+// Per string: seconds to fall 20 dB, open plus fifth fret, as the earlier hand-tuned body
+// gave them - the reference the body model was calibrated to.
+const REFERENCE_SUSTAIN = {
+  steel: [5.5, 4.55, 3.8, 3.9, 2.9, 2.75],
+  nylon: [3.4, 3, 2.6, 2.2, 1.7, 1.6],
+  twelve: [4.55, 3.5, 3.05, 3.35, 2.7, 2.55],
+};
+
+test('heard sustain per string stays within 30 % of the reference', () => {
   for (const name of NAMES) for (let s = 0; s < 6; s++) {
-    const ratio = (heardDecay(name, true, s, 0) + heardDecay(name, true, s, 5)) / (heardDecay(name, false, s, 0) + heardDecay(name, false, s, 5));
-    assert.ok(ratio > 0.7 && ratio < 1.3, `${name} string ${s}: ${ratio.toFixed(2)} x the classic sustain`);
+    const ratio = (heardDecay(name, s, 0) + heardDecay(name, s, 5)) / REFERENCE_SUSTAIN[name][s];
+    assert.ok(ratio > 0.7 && ratio < 1.3, `${name} string ${s}: ${ratio.toFixed(2)} x the reference sustain`);
   }
 });
 

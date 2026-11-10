@@ -1,4 +1,5 @@
-// Impulse response synthesis: instrument bodies (modal) and reverb (diffuse).
+// Impulse response synthesis: the statistical high-frequency field of the
+// instrument bodies, and reverb (diffuse).
 // Pure functions returning Float32Arrays so they can be used with any
 // (Offline)AudioContext and tested outside of the browser.
 
@@ -39,42 +40,15 @@ export function fft(re, im) {
   }
 }
 
-// Body definitions.
-//   modes:  the strong low resonances [frequency Hz, Q, peak gain dB]
-//           (air/Helmholtz, top plate, back, cross dipoles ...)
-//   target: third-octave smoothed level [Hz, dB] that the dense field of
-//           higher modes is calibrated to
-const BODIES = {
+// Third-octave smoothed level [Hz, dB] that each body's dense field of high
+// resonances is calibrated to.
+const TARGETS = {
   // dreadnought-style steel string
-  steel: {
-    seed: 11,
-    modes: [
-      [101, 15, 1.5], [196, 18, 2.5], [243, 24, -3], [287, 24, 0], [372, 26, 0],
-      [431, 28, 1], [498, 30, -2], [556, 30, -1], [634, 32, -2], [712, 34, -2],
-    ],
-    target: [[230, -2.5], [900, -2], [1500, -1.5], [2500, -1], [4000, -2], [6000, -4], [8000, -7], [12000, -12], [16000, -18], [22000, -28]],
-    direct: -20,
-  },
-  // classical guitar: lower, rounder, darker
-  nylon: {
-    seed: 23,
-    modes: [
-      [96, 13, 3], [188, 16, 5], [226, 22, -2], [272, 22, 1], [348, 24, 0],
-      [402, 26, 0], [466, 28, -2], [538, 30, -2], [602, 32, -3], [690, 34, -3],
-    ],
-    target: [[230, -3], [900, -4], [1500, -4.5], [2500, -6], [4000, -9], [6000, -13], [8000, -18], [12000, -26], [16000, -33], [22000, -42]],
-    direct: -28,
-  },
-  // jumbo 12-string: big low end, extra shimmer
-  twelve: {
-    seed: 37,
-    modes: [
-      [94, 15, 2], [182, 18, 4], [232, 24, -3], [276, 24, -1], [356, 26, -1],
-      [418, 28, 0], [486, 30, -2], [548, 30, -1], [622, 32, -2], [704, 34, -3],
-    ],
-    target: [[230, -4], [900, -4], [1500, -4], [2500, -4], [4000, -5.5], [6000, -8], [8000, -11], [12000, -17], [16000, -24], [22000, -32]],
-    direct: -21,
-  },
+  steel: [[230, -2.5], [900, -2], [1500, -1.5], [2500, -1], [4000, -2], [6000, -4], [8000, -7], [12000, -12], [16000, -18], [22000, -28]],
+  // classical guitar: rounder, darker
+  nylon: [[230, -3], [900, -4], [1500, -4.5], [2500, -6], [4000, -9], [6000, -13], [8000, -18], [12000, -26], [16000, -33], [22000, -42]],
+  // jumbo 12-string: extra shimmer
+  twelve: [[230, -4], [900, -4], [1500, -4], [2500, -4], [4000, -5.5], [6000, -8], [8000, -11], [12000, -17], [16000, -24], [22000, -32]],
 };
 
 function interpTarget(tg, f) {
@@ -123,40 +97,36 @@ function bandDb(p, N, fs, f, oct) {
   return 10 * Math.log10(s / (hi - lo + 1) + 1e-30);
 }
 
-// A field of resonances: `fixed` ones as given ([f, Q, dB]) plus a dense
-// field from `fromHz` upwards, calibrated so the smoothed response follows
-// `target` ([[Hz, dB], …]). Returns the two channels (Float64Array).
-function modeField(fs, len, target, seed, fromHz, fixed) {
+// A dense field of resonances from `fromHz` upwards, calibrated so the smoothed
+// response follows `target` ([[Hz, dB], …]). Returns the two channels (Float64Array).
+export function denseField(fs, len, target, seed, fromHz) {
   const rnd = mulberry32(seed);
   const N = 1 << Math.ceil(Math.log2(len));
   const list = [];
   let alt = 1;
-  const add = (f, q, db, isFixed) => {
+  const add = (f, q, db) => {
     // neighbouring modes mostly alternate in sign -> no deep anti-resonances
     alt = -alt;
     // stereo: decorrelate the upper modes, keep the low end mono
     const wide = Math.max(0, Math.min(1, (f - 220) / 600));
     list.push({
-      f, q, db, fixed: isFixed, sign: rnd() < 0.07 ? -alt : alt,
+      f, q, db, sign: rnd() < 0.07 ? -alt : alt,
       gl: Math.pow(10, (wide * (rnd() * 7 - 3.5)) / 20), gr: Math.pow(10, (wide * (rnd() * 7 - 3.5)) / 20),
       pl: wide * (rnd() - 0.5) * 2.6, pr: wide * (rnd() - 0.5) * 2.6,
       sr: 1,
     });
   };
-  for (const [f, q, db] of fixed) add(f, q, db, true);
-  // dense field of weaker modes
   let f = fromHz;
   const top = Math.min(fs * 0.46, 21000);
   while (f < top) {
-    add(f, 18 + rnd() * 16 + Math.min(26, f / 160), interpTarget(target, f) - 8 + (rnd() * 4 - 2), false);
+    add(f, 18 + rnd() * 16 + Math.min(26, f / 160), interpTarget(target, f) - 8 + (rnd() * 4 - 2));
     f += 11 + rnd() * 20 + f * 0.004;
   }
-  // calibrate the dense field so the smoothed response follows the target
+  // calibrate the field so the smoothed response follows the target
   for (let pass = 0; pass < 3; pass++) {
     const pL = powerSpec(renderModes(list, len, fs, 0), N), pR = powerSpec(renderModes(list, len, fs, 1), N);
     for (let i = 0; i < pL.length; i++) pL[i] = 0.5 * (pL[i] + pR[i]);
     for (const m of list) {
-      if (m.fixed) continue;
       const err = interpTarget(target, m.f) - bandDb(pL, N, fs, m.f, 0.5);
       m.db += Math.max(-12, Math.min(12, err)) * 0.85;
     }
@@ -164,30 +134,7 @@ function modeField(fs, len, target, seed, fromHz, fixed) {
   return { L: renderModes(list, len, fs, 0), R: renderModes(list, len, fs, 1) };
 }
 
-// the statistical high-frequency field on its own (used above the modelled body's range)
-export function denseField(fs, len, target, seed, fromHz) {
-  return modeField(fs, len, target, seed, fromHz, []);
-}
-export const bodyTarget = (type) => (BODIES[type] || BODIES.steel).target;
-
-export function makeBodyIR(fs, type) {
-  const def = BODIES[type] || BODIES.steel;
-  const len = Math.floor(fs * 0.42);
-  const { L, R } = modeField(fs, len, def.target, def.seed * 7919, 232, def.modes);
-  // direct (string) radiation: broadband, without lows
-  const direct = Math.pow(10, def.direct / 20);
-  const hp = Math.exp((-2 * Math.PI * 400) / fs);
-  let lp = 1 - hp; // impulse response of the removed lowpass part
-  L[0] += direct * hp; R[0] += direct * hp;
-  for (let i = 1; i < 400; i++) { lp *= hp; L[i] -= direct * lp; R[i] -= direct * lp; }
-  const fade = Math.floor(fs * 0.03);
-  const outL = new Float32Array(len), outR = new Float32Array(len);
-  for (let i = 0; i < len; i++) {
-    const k = i > len - fade ? (len - i) / fade : 1;
-    outL[i] = L[i] * k; outR[i] = R[i] * k;
-  }
-  return { L: outL, R: outR };
-}
+export const bodyTarget = (type) => TARGETS[type] || TARGETS.steel;
 
 // Diffuse reverb: early reflections + band-split exponentially decaying noise.
 // decay: RT60 (s) at mid frequencies, tone: 0 dark .. 1 bright

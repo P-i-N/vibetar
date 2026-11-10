@@ -122,7 +122,7 @@ test('slides add friction noise while the finger moves', () => {
 
 test('combined techniques and a storm of events stay bounded', () => {
   for (const preset of ['steel', 'nylon', 'twelve']) {
-    const e = engine({ preset, symp: 1, fingerNoise: 1 });
+    const e = engine({ preset, fingerNoise: 1 });
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const techs = ['', 'm', 'mh', 'ms', 'x', '*', 'v', 'b', 'h', 's', 'mv', 'mb'];
@@ -179,6 +179,6 @@ test('changing a setting while playing does not let stopped strings and dead not
       }
       return db(rms(out, 0.5, 0.8));
     };
-    assert.ok(run(0.32) < run(null) + 3, `${bridged ? 'modelled' : 'classic'}: ${run(0.32).toFixed(1)} dB after a setting change vs ${run(null).toFixed(1)} dB without`);
+    assert.ok(run(0.32) < run(null) + 3, `${bridged ? 'modelled' : 'rigid'}: ${run(0.32).toFixed(1)} dB after a setting change vs ${run(null).toFixed(1)} dB without`);
   }
 });
