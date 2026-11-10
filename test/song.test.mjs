@@ -226,3 +226,35 @@ test('new songs and every instrument humanize at 50 %', () => {
   assert.equal(S.newSong().inst.human, 0.5);
   for (const inst of Object.values(S.INSTRUMENTS)) assert.equal(inst.human, 0.5);
 });
+
+test('a slide from a note that has faded plucks it again first; from a fresh note it just slides', () => {
+  const song = blank();                      // 90 bpm, sixteenths: 0.167 s a step
+  S.setCell(song, 0, 5, { f: 5, t: '' });
+  S.setCell(song, 8, 5, { f: 9, t: 's' });   // 1.33 s later
+  S.setCell(song, 9, 5, { f: 7, t: 's' });   // right after
+  const at = (st) => S.stepEvents(song, st, st / 6, Math.random).filter((e) => e.type === 'n');
+  const [pre, slide] = at(8);
+  assert.ok(pre && slide, 'a pluck, then the slide');
+  assert.ok(Math.abs(pre.f - S.midiHz(64 + 5)) < 1e-9 && !pre.k.includes('s'), 'the old note again, plucked');
+  assert.ok(slide.k.includes('s') && Math.abs(slide.f - S.midiHz(64 + 9)) < 1e-9);
+  const glide = Math.min(0.3, Math.max(0.07, 0.035 * 4));
+  assert.ok(slide.t > pre.t && Math.abs(slide.t + glide - 8 / 6) < 0.01, 'the slide arrives on the beat');
+  assert.equal(at(9).length, 1, 'no new pluck right after a note');
+  // a stopped string has nothing to slide from
+  S.setCell(song, 4, 5, { f: '.', t: '' });
+  assert.equal(at(8).length, 1);
+});
+
+test('a slide after a long note is heard as loud as a plucked note', async () => {
+  const { engine, render, rms, db } = await import('./util.mjs');
+  const level = (cells) => {
+    const song = blank();
+    for (const [st, f, t] of cells) S.setCell(song, st, 5, { f, t });
+    const e = engine({ preset: 'steel', fingerNoise: 0 });
+    for (const ev of S.songEvents(song, 0, 16, 0.05, Math.random)) e.post(ev);
+    const x = render(e, 2.2);
+    return db(rms(x, 1.55, 1.75));
+  };
+  const slid = level([[0, 5, ''], [9, 9, 's']]), plucked = level([[0, 5, ''], [9, 9, '']]);
+  assert.ok(slid > plucked - 6, `slide ${slid.toFixed(1)} dB, pluck ${plucked.toFixed(1)} dB`);
+});

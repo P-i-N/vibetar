@@ -9,7 +9,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 ## Features
 
 - Six-string tab grid with keyboard, mouse and touch input; copy / paste, undo, bar tools
-- Techniques: hammer-on / pull-off, slide, bend, vibrato, dead notes, accents — and they combine
+- Techniques: hammer-on / pull-off, slide, bend, vibrato, dead notes, accents — and they combine. A slide from a note that has faded (plucked more than half a second before) plucks that note again and slides from it
 - Palm-muted passages, marked with a `P.M.` bracket above the staff
 - Natural harmonics, written `<12>`
 - A fretting hand read from the tab: it holds notes down while it can, barres chords, moves along the neck when it must, and mutes the string before in single-note lines; its fingers squeak where hands do — on shifts, at section starts, after pauses

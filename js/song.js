@@ -351,6 +351,21 @@ function gapBefore(song, step, s, stepDur) {
   return 0;
 }
 
+// A slide starts from the note sounding on its string. When that note was plucked more than
+// RESTART seconds ago it has faded, so the player plucks it again and slides from there.
+// Returns that note's fret, or null (a recent note, or nothing to slide from).
+const RESTART = 0.5;
+function slideRestart(song, step, s, stepDur) {
+  for (let i = 1; i <= step; i++) {
+    const c = getCell(song, step - i, s);
+    if (!c) continue;
+    if (typeof c.f !== 'number' || (c.t || '').includes('*')) return null;
+    return i * stepDur > RESTART ? c.f : null;
+  }
+  return null;
+}
+const GRACE = 0.04; // from the new pluck to the start of the slide
+
 // Events (for the string engine) produced by one grid step starting at time t.
 // A note's time is the moment the string is let go.
 export function stepEvents(song, step, t, rnd, perf) {
@@ -419,6 +434,15 @@ export function stepEvents(song, step, t, rnd, perf) {
     if (h > 0) ev.pp = Math.round(h * perf.drift.p * 100) / 100;
     const gap = gapBefore(song, step, s, stepDur);
     if (gap) ev.gap = gap;
+    const from = ev.k.includes('s') ? slideRestart(song, step, s, stepDur) : null;
+    if (from != null && from !== cell.f) {
+      // pluck the old note, then slide so that the new one arrives on time (as long as the engine's glide)
+      const glide = Math.min(0.3, Math.max(0.07, 0.035 * Math.abs(cell.f - from)));
+      const pre = { ...ev, t: Math.max(0, ev.t - glide - GRACE), f: midiHz(song.tuning[s] + song.capo + from), k: ev.k.replace(/[sbv]/g, ''), fr: from > 0 };
+      delete pre.gap;
+      ev.t = pre.t + GRACE;
+      out.push(pre);
+    }
     out.push(ev);
   });
   const first = out.reduce((m, e) => (e.type === 'n' && e.t < m ? e.t : m), Infinity);
