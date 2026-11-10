@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody } from './util.mjs';
+import { FS, OPEN, midiHz, spectrum, peakNear, bandEnergy, db, rms, peak, engine, render, note, cachedBody, aLevel } from './util.mjs';
 
 const N = 1 << 16;
 
@@ -94,6 +94,23 @@ test('finger travel makes a quiet band-limited squeak on wound strings', () => {
   assert.equal(peak(run(0, 1)), 0);
   // plain strings only hiss
   assert.ok(peak(run(1, 5)) < peak(sq) * 0.5);
+});
+
+test('at the default setting a squeak is clearly heard next to a note', () => {
+  const e = engine({ fingerNoise: 0.3 });
+  e.post({ type: 'q', t: 0.05, s: 1, dur: 0.14, amt: 0.6 });
+  const lv = aLevel(render(e, 0.5), Math.floor(0.05 * FS), 4096) - aLevel(note(1, 3), Math.floor(0.01 * FS), 4096);
+  assert.ok(lv > -19 && lv < -10, `squeak ${lv.toFixed(1)} dB(A) re note`);
+});
+
+test('a squeak without lifting leaves the note ringing', () => {
+  const run = (nl) => {
+    const e = engine({ fingerNoise: 0 });
+    e.post({ type: 'n', t: 0.01, s: 1, f: midiHz(OPEN[1] + 3), v: 0.8, k: '', fr: true, d: 1 });
+    e.post({ type: 'q', t: 0.3, s: 1, dur: 0.12, amt: 0.5, nl });
+    return render(e, 0.6);
+  };
+  assert.ok(db(rms(run(true), 0.45, 0.5)) > db(rms(run(false), 0.45, 0.5)) + 15);
 });
 
 test('a travelling finger lets the old note die', () => {

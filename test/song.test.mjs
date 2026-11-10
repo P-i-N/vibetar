@@ -81,6 +81,43 @@ test('a chord shape moving along the neck takes every finger with it', () => {
   assert.deepEqual(q.map((e) => e.s).sort(), [0, 1, 2]);
 });
 
+// share of plays of a step that make a finger squeak, and the squeak events
+function squeaks(song, step, plays = 300) {
+  let n = 0;
+  const evs = [];
+  for (let i = 0; i < plays; i++) {
+    const q = S.stepEvents(song, step, 10, Math.random).filter((e) => e.type === 'q' && e.amt > 0);
+    if (q.length) { n++; evs.push(...q); }
+  }
+  return { share: n / plays, evs };
+}
+
+test('the hand moving to another string squeaks on the wound string it leaves', () => {
+  const song = blank();
+  song.inst.fingerNoise = 1;
+  S.setCell(song, 0, 1, { f: 3, t: '' });   // A string, 3rd fret
+  S.setCell(song, 4, 4, { f: 10, t: '' });  // then up the neck on the B string
+  const { share, evs } = squeaks(song, 4);
+  assert.ok(share > 0.5, `${(100 * share).toFixed(0)} % of plays squeak`);
+  assert.ok(evs.every((e) => e.s === 1 && e.nl), 'the finger slides along the A string; the B string note is not lifted');
+  const n = S.stepEvents(song, 4, 10, Math.random).find((e) => e.type === 'n');
+  assert.ok(evs.every((e) => e.t + e.dur <= n.t + 1e-9 && e.t > n.t - 0.4));
+});
+
+test('changing chords lifts fingers off the wound strings, sometimes audibly', () => {
+  const song = blank();
+  song.inst.fingerNoise = 1;
+  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 0, s, { f, t: '' })); // C
+  [3, 2, 0, 0, 0, 3].forEach((f, s) => S.setCell(song, 8, s, { f, t: '' }));            // G
+  const { share, evs } = squeaks(song, 8);
+  assert.ok(share > 0.1 && share < 0.6, `${(100 * share).toFixed(0)} % of chord changes squeak`);
+  assert.ok(evs.every((e) => (e.s === 1 || e.s === 2) && e.nl && e.dur <= 0.06 && e.amt <= 0.5), JSON.stringify(evs[0]));
+  // the same chord again moves no finger
+  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 16, s, { f, t: '' }));
+  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 24, s, { f, t: '' }));
+  assert.equal(squeaks(song, 24).share, 0);
+});
+
 test('fast passages are not cut short by the travelling finger', () => {
   const song = blank();
   song.bpm = 160;

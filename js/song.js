@@ -288,7 +288,53 @@ function fingerTravel(song, step, s, cell, tNote, stepDur, rnd) {
   return null;
 }
 
-// Events (for the string engine) produced by one grid step starting at time t.
+// [string, fret] of the notes of a column that hold a finger down (not open strings or harmonics)
+function fretted(col) {
+  const out = [];
+  if (col) col.forEach((c, s) => { if (c && typeof c.f === 'number' && c.f > 0 && !(c.t || '').includes('*')) out.push([s, c.f]); });
+  return out;
+}
+
+// Fingers that leave a string without a note of their own on it, compared with the last
+// column that held fingers down: on a chord change a finger lifts off a wound string, on a
+// position shift it slides along one as the hand travels. Either can squeak; the notes ring on.
+// Returns one such noise (or null). tNote: when the column's first note sounds.
+function handMove(song, step, tNote, stepDur, rnd) {
+  const wound = WOUND[song.inst.preset], amount = song.inst.fingerNoise || 0;
+  const col = song.cols[step];
+  if (!wound || !(amount > 0)) return null;
+  if (col.some((c) => c && typeof c.f === 'number' && /[hs]/.test(c.t || ''))) return null; // legato: the hand stays
+  const now = fretted(col);
+  if (!now.length) return null;
+  const maxBack = Math.min(step, Math.ceil(1.6 / stepDur));
+  let prev = null, back = 0;
+  for (let i = 1; i <= maxBack && !prev; i++) { const p = fretted(song.cols[step - i]); if (p.length) { prev = p; back = i; } }
+  if (!prev) return null;
+  const at = new Map(now);
+  const leaving = prev.filter(([s, f]) => s < wound && at.get(s) !== f);
+  const frets = (x) => x.map(([, f]) => f);
+  const lo = (x) => Math.min(...frets(x));
+  const span = Math.max(...frets(prev), ...frets(now)) - Math.min(lo(prev), lo(now));
+  let s, dur, amt;
+  if (span >= 4) {
+    const dist = Math.max(1, Math.abs(lo(now) - lo(prev)));
+    const slid = leaving.length ? leaving : prev;
+    s = slid[(rnd() * slid.length) | 0][0];
+    const chance = Math.min(0.9, 0.3 + 0.1 * dist) * Math.min(1, 0.4 + amount) * (s < wound ? 1 : 0.35);
+    if (rnd() >= chance) return null;
+    dur = Math.min(Math.max(0.07, 0.045 + 0.022 * dist), 0.22);
+    amt = Math.min(1, 0.35 + 0.1 * dist) * (0.6 + 0.4 * rnd());
+  } else {
+    if (!leaving.length || rnd() >= 0.3 * Math.min(1, 0.4 + amount)) return null;
+    s = leaving[(rnd() * leaving.length) | 0][0];
+    dur = 0.03 + 0.02 * rnd();
+    amt = 0.25 + 0.2 * rnd();
+  }
+  dur = Math.min(dur, 0.4 * back * stepDur);
+  const t = Math.max(0, tNote - dur - 0.012);
+  return { type: 'q', t, s, dur: Math.min(dur, Math.max(0.01, tNote - t)), amt, nl: true };
+}
+
 // ---- the performer -----------------------------------------------------------
 // What a player carries from note to note: which finger or pick direction came
 // last, and a slow drift in timing, loudness and plucking point. Unlike
@@ -402,6 +448,11 @@ export function stepEvents(song, step, t, rnd, perf) {
     if (gap) ev.gap = gap;
     out.push(ev);
   });
+  const first = out.reduce((m, e) => (e.type === 'n' && e.t < m ? e.t : m), Infinity);
+  if (first < Infinity && !out.some((e) => e.type === 'q')) {
+    const q = handMove(song, step, first, stepDur, rnd);
+    if (q) out.unshift(q);
+  }
   return out;
 }
 

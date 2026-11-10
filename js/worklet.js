@@ -361,11 +361,12 @@ class PluckVoice {
   // Sliding along a wound string hits one winding after the other: a pulse
   // train whose rate follows the finger speed, coloured by the string's
   // longitudinal resonance. Plain strings only hiss.
+  // The setting is a loudness control: its square root, so that low settings stay audible.
   squeak(dur, amt, P) {
-    const lvl = amt * P.fingerNoise;
+    const lvl = amt * Math.sqrt(P.fingerNoise);
     if (!(lvl > 0) || !(dur > 0)) return;
     this.sqLen = this.sqN = Math.max(64, Math.round(dur * this.fs));
-    this.sqAmp = lvl * (this.wound ? 0.5 : 0.06);
+    this.sqAmp = lvl * (this.wound ? 0.7 : 0.06);
     this.sqRate = this.wound ? (900 + 2600 * this.rnd()) * (0.55 + 0.45 * amt) / this.fs : 0;
     this.sqPh = this.rnd(); this.sqPulse = 0;
   }
@@ -506,11 +507,11 @@ class PluckVoice {
     }
   }
 
-  // the fretting finger lets go and travels to its next position
-  shift(dur, amt, P) {
+  // a finger travels along the string; with `lift` it is the finger that held the note
+  shift(dur, amt, P, lift) {
     this.squeak(dur, amt, P);
     // no longer pressed down, the string rests against the fingertip and dies away
-    if (this.sounding && this.tkT >= 1) this.touch(LIFT, this.fs / this.curFreq, 0.9, 0.015, 0);
+    if (lift && this.sounding && this.tkT >= 1) this.touch(LIFT, this.fs / this.curFreq, 0.9, 0.015, 0);
   }
 
   // a hand comes down on the string
@@ -899,8 +900,8 @@ class VibetarEngine {
         vs[ev.s].mute(false);
         if (this.pairs) vs[ev.s + 6].mute(false);
         break;
-      case 'q': // a finger travels along string s
-        vs[ev.s].shift(ev.dur, ev.amt, this.P);
+      case 'q': // a finger travels along string s; nl: it does not hold the note on it
+        vs[ev.s].shift(ev.dur, ev.amt, this.P, !ev.nl);
         break;
       case 'O':
         for (const v of vs) v.mute(true);
