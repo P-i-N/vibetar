@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>vibetar — guitar tab editor &amp; string synth</title>
+<meta name="description" content="A tiny guitar tab editor with a physically modelled acoustic guitar and string synthesizer. Write a tab, press play, share it as a link.">
+<meta name="theme-color" content="#171310">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171310'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23f0a45d' stroke-width='2.5'/%3E%3Cpath d='M4 12h24M4 16h24M4 20h24' stroke='%23f6ead8' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand" title="vibetar">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><circle cx="16" cy="16" r="10" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M2 11.5h28M2 16h28M2 20.5h28" stroke="var(--ink)" stroke-width="1.1"/></svg>
+    <span>vibetar</span>
+  </div>
+  <input id="title" class="title" type="text" maxlength="80" spellcheck="false" aria-label="Song title" placeholder="Song title">
+  <div class="transport">
+    <button id="play" class="btn primary" title="Play / stop (Space)"><span class="ico" id="playIco">▶</span><span id="playLbl">Play</span></button>
+    <button id="loop" class="btn toggle" title="Loop (L)" aria-pressed="false">Loop</button>
+    <label class="field bpm" title="Tempo">
+      <input id="bpm" type="number" min="30" max="300" step="1" inputmode="numeric" aria-label="Tempo in BPM"><span>bpm</span>
+    </label>
+    <canvas id="meter" width="64" height="22" aria-hidden="true"></canvas>
+  </div>
+  <div class="spacer"></div>
+  <button id="share" class="btn accent" title="Copy a link to this song">Share link</button>
+  <div class="menuwrap">
+    <button id="menuBtn" class="btn" aria-haspopup="true" aria-expanded="false" title="More">☰</button>
+    <div id="menu" class="menu" hidden>
+      <button data-act="new">New song</button>
+      <div class="menuhead">Demos</div>
+      <div id="demoList"></div>
+      <div class="menusep"></div>
+      <button data-act="wav">Export WAV</button>
+      <button data-act="help">Keyboard shortcuts</button>
+      <a href="https://github.com/P-i-N/vibetar" target="_blank" rel="noopener">Source on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="sheetwrap" id="sheetWrap" tabindex="0" aria-label="Tab sheet">
+    <div id="sheet" class="sheet"></div>
+    <div class="barops">
+      <button class="btn small" data-act="addBar" title="Add a bar at the end">+ Bar</button>
+      <button class="btn small" data-act="insBar" title="Insert an empty bar before the cursor">Insert bar</button>
+      <button class="btn small" data-act="dupBar" title="Duplicate the bar under the cursor">Duplicate bar</button>
+      <button class="btn small" data-act="delBar" title="Delete the bar under the cursor">Delete bar</button>
+      <span class="hint" id="status"></span>
+    </div>
+  </section>
+
+  <aside class="panel" id="panel">
+    <details open>
+      <summary>Instrument</summary>
+      <div class="seg" id="presets" role="radiogroup" aria-label="Instrument">
+        <button data-preset="steel">Steel</button>
+        <button data-preset="nylon">Nylon</button>
+        <button data-preset="twelve">12-string</button>
+        <button data-preset="bowed">Bowed</button>
+      </div>
+      <div id="instSliders" class="sliders"></div>
+    </details>
+    <details open>
+      <summary>Reverb <label class="switch"><input type="checkbox" id="revOn"><i></i></label></summary>
+      <div id="revSliders" class="sliders"></div>
+    </details>
+    <details open>
+      <summary>Delay <label class="switch"><input type="checkbox" id="dlyOn"><i></i></label></summary>
+      <div class="row">
+        <span class="lbl">Time</span>
+        <div class="seg small" id="dlyTime">
+          <button data-v="4">1/4</button><button data-v="8d">1/8.</button><button data-v="8">1/8</button><button data-v="8t">1/8T</button><button data-v="16">1/16</button>
+        </div>
+      </div>
+      <div id="dlySliders" class="sliders"></div>
+    </details>
+    <details open>
+      <summary>Song</summary>
+      <div class="row"><span class="lbl">Tuning</span><select id="tuning"></select></div>
+      <div class="row"><span class="lbl">Capo</span><select id="capo"></select></div>
+      <div class="row"><span class="lbl">Beats / bar</span><select id="bpb"></select></div>
+      <div class="row"><span class="lbl">Grid</span>
+        <select id="spb"><option value="2">8th notes</option><option value="3">8th triplets</option><option value="4">16th notes</option><option value="6">16th triplets</option></select>
+      </div>
+      <div id="masterSliders" class="sliders"></div>
+    </details>
+  </aside>
+</main>
+
+<footer class="pad" id="pad">
+  <div class="padgroup" id="padDigits"></div>
+  <div class="padgroup" id="padTech">
+    <button data-key="h" title="Hammer-on / pull-off (H)">h</button>
+    <button data-key="s" title="Slide into note (S)">/</button>
+    <button data-key="b" title="Bend a whole step (B)">b</button>
+    <button data-key="v" title="Vibrato (V)">~</button>
+    <button data-key="m" title="Palm mute (M)">pm</button>
+    <button data-key=">" title="Accent (&gt;)">&gt;</button>
+    <button data-key="*" title="Natural harmonic (*) — frets 12, 7, 5 …">◇</button>
+    <button data-key="x" title="Dead note (X)">x</button>
+    <button data-key="." title="Stop the string (.)">▪</button>
+    <button data-key="Backspace" title="Erase (Backspace)">⌫</button>
+  </div>
+  <div class="padgroup" id="padEdit">
+    <button data-key="undo" title="Undo (Ctrl+Z)">↶</button>
+    <button data-key="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+  </div>
+</footer>
+
+<dialog id="help">
+  <h2>Shortcuts</h2>
+  <table>
+    <tr><td><kbd>0</kbd>–<kbd>9</kbd></td><td>Enter a fret (type two digits quickly for 10–24)</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move · hold <kbd>Shift</kbd> to select · <kbd>Ctrl</kbd> jumps a beat</td></tr>
+    <tr><td><kbd>Home</kbd> <kbd>End</kbd> <kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Bar start / end · previous / next bar</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>Play from the cursor's bar / stop · <kbd>Enter</kbd> plays from the top</td></tr>
+    <tr><td><kbd>L</kbd></td><td>Loop (loops the selection if there is one)</td></tr>
+    <tr><td><kbd>H</kbd> <kbd>S</kbd> <kbd>B</kbd> <kbd>V</kbd></td><td>Hammer-on/pull-off · slide · bend · vibrato</td></tr>
+    <tr><td><kbd>M</kbd> <kbd>&gt;</kbd> <kbd>*</kbd></td><td>Palm mute · accent · natural harmonic</td></tr>
+    <tr><td><kbd>X</kbd> <kbd>.</kbd></td><td>Dead note · stop the string</td></tr>
+    <tr><td><kbd>Backspace</kbd></td><td>Erase note or selection</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> <kbd>X</kbd> <kbd>V</kbd></td><td>Copy · cut · paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo / redo</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>Shift the selected frets up / down</td></tr>
+  </table>
+  <p class="hint">Notes ring until the same string is played again or stopped with <kbd>.</kbd> — just like a real guitar. Notes in the same column are strummed. Your song lives in the page address: copy it any time to share.</p>
+  <form method="dialog"><button class="btn primary">Got it</button></form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
