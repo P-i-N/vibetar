@@ -222,9 +222,9 @@ test('string coupling survives the link; old links get the instrument default', 
   assert.equal(old.inst.coupling, S.INSTRUMENTS.nylon.coupling);
 });
 
-test('new songs and every instrument humanize at 50 %', () => {
-  assert.equal(S.newSong().inst.human, 0.5);
-  for (const inst of Object.values(S.INSTRUMENTS)) assert.equal(inst.human, 0.5);
+test('new songs and every instrument humanize at 100 %', () => {
+  assert.equal(S.newSong().inst.human, 1);
+  for (const inst of Object.values(S.INSTRUMENTS)) assert.equal(inst.human, 1);
 });
 
 test('a slide from a note that has faded plucks it again first; from a fresh note it just slides', () => {

@@ -76,7 +76,7 @@ function campfire() {
 }
 
 function romance() {
-  const song = make('Romance (trad.)', 84, 3, 3, 16, { preset: 'nylon', human: 0.3 }, { revMix: 0.34, revSize: 3.2, revTone: 0.42 });
+  const song = make('Romance (trad.)', 84, 3, 3, 16, { preset: 'nylon', human: 0.3, picking: 2 }, { revMix: 0.34, revSize: 3.2, revTone: 0.42 });
   // [melody frets on the high e], B-string fret, G-string fret, [bass string, fret]
   const bars = [
     [[7, 7, 7], 0, 0, [0, 0]], [[7, 5, 3], 0, 0, [0, 0]], [[3, 2, 0], 0, 0, [0, 0]], [[0, 3, 7], 0, 0, [0, 0]],

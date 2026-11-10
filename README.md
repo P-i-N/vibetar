@@ -17,7 +17,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - **Humanize** (the switch next to the tempo, the amount in the Player panel): timing and loudness drift, phrases breathe, the song slows into its last note, the melody is brought out, no string is exactly in tune. Off: the tab is played exactly as written
 - A body computed from wood, bracing and air, heard through two virtual microphones
 - Three instruments: steel-string, nylon and 12-string
-- Five picking techniques: pick, bare fingers, short nails, long nails, hybrid
+- Three picking techniques: pick, fingers, hybrid (pick on the bass strings, fingers on the trebles)
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb with spaces from a small room to a cathedral, and tempo-synced ping-pong delay
 - MIDI file import (menu, or drop a `.mid` on the page): every track but the drums, quantised to the grid that fits, on frets chosen so the hand moves as little as possible ([js/midi.js](js/midi.js)). The notes keep their pitch, laid out for standard tuning without a capo, or for the current song's tuning and capo

@@ -14,7 +14,7 @@ test('instruments have a default picking technique', () => {
   assert.deepEqual(S.PICKING, ['pick', 'flesh', 'nailS', 'nailL', 'hybrid']);
   assert.equal(S.INSTRUMENTS.steel.picking, 0);
   assert.equal(S.INSTRUMENTS.twelve.picking, 0);
-  assert.equal(S.INSTRUMENTS.nylon.picking, 2);
+  assert.equal(S.INSTRUMENTS.nylon.picking, 3);
 });
 
 test('thumb takes the bass strings, fingers alternate on the trebles', () => {
@@ -101,9 +101,9 @@ test('with humanize, timing and loudness drift slowly inside their limits', () =
 
 test('old links get the instrument default; picking round-trips', async () => {
   const old = S.unpackSong({ v: 1, t: 'old', b: 100, g: [4, 4, 1], u: [40, 45, 50, 55, 59, 64], c: 0, n: 'A3', i: ['nylon', 0.2, 0.5, 0, 0, 0.9, 0.3, 18, 0.35, 1], x: [1, 0.26, 2.2, 0.5, 0, '8d', 0.35, 0.22, 0.8] });
-  assert.equal(old.inst.picking, 2);
-  const s = song('steel', 3);
-  assert.equal((await S.decodeSong(await S.encodeSong(s))).inst.picking, 3);
+  assert.equal(old.inst.picking, 3);
+  // flesh and short nails are no longer in the panel; a link that has them keeps them
+  for (const picking of [1, 2, 3, 4]) assert.equal((await S.decodeSong(await S.encodeSong(song('steel', picking)))).inst.picking, picking);
 });
 
 test('a note right after another on its string tells the engine how little time the stroke has', () => {

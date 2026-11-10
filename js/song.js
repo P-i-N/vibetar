@@ -36,16 +36,17 @@ export function toggleFlag(t, flag) {
 }
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, strum: 14, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.4, humanOn: 1 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, strum: 18, human: 0.5, fingerNoise: 0.25, picking: 2, coupling: 0.3, humanOn: 1 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, strum: 16, human: 0.5, fingerNoise: 0.3, picking: 0, coupling: 0.3, humanOn: 1 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, strum: 14, human: 1, fingerNoise: 1, picking: 0, coupling: 0.4, humanOn: 1 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, strum: 18, human: 1, fingerNoise: 1, picking: 3, coupling: 0.3, humanOn: 1 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, strum: 16, human: 1, fingerNoise: 1, picking: 0, coupling: 0.3, humanOn: 1 },
 };
 // Order of the settings in a link. A retired setting keeps its place (null), so old links still load.
 const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', null, 'strum', 'human', null, 'fingerNoise', 'picking', null, 'coupling', 'humanOn'];
 // How much of the performer's feel is played: `human` is the amount, `humanOn` (1 or 0) the
 // switch next to the tempo. Switched off, the song is played exactly as written.
 export const humanOf = (inst) => (inst.humanOn === 0 ? 0 : inst.human);
-// picking techniques, by inst.picking
+// Picking techniques, by inst.picking. The panel offers the pick, the fingers (nailL) and
+// hybrid; flesh and nailS come from older links and are still played.
 export const PICKING = ['pick', 'flesh', 'nailS', 'nailL', 'hybrid'];
 // number of wound strings, counted from the lowest
 const WOUND = { steel: 4, nylon: 3, twelve: 4 };

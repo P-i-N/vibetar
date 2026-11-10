@@ -635,7 +635,9 @@ function buildSettings() {
 
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
-  for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
+  // songs from older links may have bare fingers (1) or short nails (2): they show as Fingers
+  const picking = song.inst.picking || 0;
+  for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (picking >= 1 && picking <= 3 ? 3 : picking));
   $('humanOn').checked = song.inst.humanOn !== 0;
   humanRow.classList.toggle('off', song.inst.humanOn === 0);
   for (const r of sliders) r();
