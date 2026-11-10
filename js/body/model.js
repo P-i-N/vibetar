@@ -4,9 +4,9 @@
 import { INSTRUMENTS } from './instruments.js';
 import { coupleBody, plateConductance } from './couple.js';
 import { micTransfer } from './radiate.js';
-import { fft, denseField, bodyTarget } from '../ir.js';
+import { fft, denseField, bodyTarget, micGain } from '../ir.js';
 
-export const MODEL_VERSION = 5;
+export const MODEL_VERSION = 6;
 export const BRIDGE_MODES = 24;      // resonances that also run inside the string engine
 const LENGTH = 0.42;                 // seconds of impulse response
 const XFADE = [3000, 5000];          // modelled range fades out, statistical field fades in
@@ -51,11 +51,12 @@ export function buildBody(name, fs) {
   const power = (s, lo, hi) => { let p = 0; for (let b = bin(lo); b < bin(hi); b++) p += s.re[b] ** 2 + s.im[b] ** 2; return p / (bin(hi) - bin(lo)); };
 
   // above the modelled range: a statistical field at the level the model ends on
+  // (both through the microphone chain of the instrument, if it has one)
   const wM = new Float64Array(half + 1), wD = new Float64Array(half + 1);
   for (let b = 0; b <= half; b++) {
-    const f = (b * fs) / nfft;
+    const f = (b * fs) / nfft, mic = Math.pow(10, micGain(name, f) / 20);
     const u = f <= XFADE[0] ? 0 : f >= XFADE[1] ? 1 : Math.log(f / XFADE[0]) / Math.log(XFADE[1] / XFADE[0]);
-    wM[b] = Math.cos((Math.PI / 2) * u); wD[b] = Math.sin((Math.PI / 2) * u);
+    wM[b] = mic * Math.cos((Math.PI / 2) * u); wD[b] = mic * Math.sin((Math.PI / 2) * u);
   }
   const target = bodyTarget(name);
   const fields = [];
@@ -106,7 +107,14 @@ export function buildBody(name, fs) {
     for (let fc = 150; fc <= 2000; fc *= Math.pow(2, 1 / 3)) { p += power({ re, im }, fc / Math.pow(2, 1 / 6), fc * Math.pow(2, 1 / 6)); bands++; }
   }
   const norm = 1 / Math.sqrt(p / bands), fade = Math.floor(0.03 * fs);
-  for (const h of irs) for (let i = 0; i < len; i++) h[i] *= norm * (i > len - fade ? (len - i) / fade : 1);
+  for (const h of irs) {
+    for (let i = 0; i < len; i++) h[i] *= norm * (i > len - fade ? (len - i) / fade : 1);
+    // cutting the response off leaves a little DC: take it out
+    let mean = 0;
+    for (let i = 0; i < len; i++) mean += h[i];
+    mean /= len;
+    for (let i = 0; i < len; i++) h[i] -= mean;
+  }
 
   const KB = Math.min(BRIDGE_MODES, K);
   const bridge = { K: KB, f: body.f.slice(0, KB), eta: body.eta.slice(0, KB), phi: new Float64Array(6 * KB), rock: new Float64Array(6 * KB), z: body.z.slice(), gRes: plateConductance(inst) };

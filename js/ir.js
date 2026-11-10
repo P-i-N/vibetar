@@ -51,6 +51,19 @@ const TARGETS = {
   twelve: [[230, -4], [900, -4], [1500, -4], [2500, -4], [4000, -5.5], [6000, -8], [8000, -11], [12000, -17], [16000, -24], [22000, -32]],
 };
 
+// The microphone and the recording chain [Hz, dB], on top of what the model gives the
+// microphones. Not computed: matched to the long-term spectrum of a recording of a steel-string
+// guitar (third-octave bands, five demos against 23 s of fingerstyle playing). Against that
+// recording the model alone has its main top resonance 8 dB too far above the bands next to it,
+// a hole below it, and falls 7 dB (3 kHz) to 25 dB (10 kHz) too far towards the highs. The
+// curve takes all of the first two and about two thirds of the last, up to 16 dB: a part of
+// that fall is the equalizer of the recording, not the guitar.
+const MICS = {
+  steel: [[80, 0], [100, 3], [126, 8], [150, 1], [172, -2], [183, -10], [192, -12], [203, -10], [218, -3], [240, 0], [2000, 0], [2500, 2], [3200, 4], [4000, 9], [5000, 9.5], [6400, 10.5], [8000, 13], [10000, 15], [13000, 16]],
+};
+// gain (dB) of an instrument's microphone chain at f; 0 where there is none
+export const micGain = (type, f) => (MICS[type] ? interpTarget(MICS[type], f) : 0);
+
 function interpTarget(tg, f) {
   if (f <= tg[0][0]) return tg[0][1];
   for (let i = 1; i < tg.length; i++) {

@@ -22,13 +22,18 @@ function stats(x) {
   return { peak: pk, rms: db(Math.sqrt(s / x.length)), bands: Array.from(acc, (v) => 10 * Math.log10(v / frames)) };
 }
 
-// Level (dB) and octave bands 125 Hz - 4 kHz of these demos as the earlier, hand-tuned body
-// played them: the reference the body model was calibrated to.
+// Level (dB) and octave bands 125 Hz - 4 kHz of these songs. Nylon and 12-string: as the
+// earlier, hand-tuned body played them, the reference the body model was calibrated to.
+// Steel-string: as the body plays them through its microphone chain, which follows a
+// recording (MICS in ir.js), at a level that is as loud to the ear (A-weighted) as before
+// the chain; with the hand-tuned body First Light had
+// [54.7, 62.9, 56.3, 53.9, 45.2, 39.7] at -18.3 dB, Night Drive [55.3, 62.2, 53, 51.5, 43.6, 39]
+// at -19.2 dB.
 const REFERENCE = {
-  'First Light': { rms: -18.3, bands: [54.7, 62.9, 56.3, 53.9, 45.2, 39.7] },
+  'First Light': { rms: -23.0, bands: [52.9, 55.5, 52.5, 53.6, 44.0, 43.5] },
   'Romance (trad.)': { rms: -18.1, bands: [57.1, 61.9, 57.6, 52, 42.8, 21.5] },
   'Campfire': { rms: -18.4, bands: [57.3, 59.9, 58.7, 57.3, 51.2, 42.5] },
-  'Night Drive': { rms: -19.2, bands: [55.3, 62.2, 53, 51.5, 43.6, 39] },
+  'Night Drive': { rms: -24.2, bands: [53.3, 55.0, 50.6, 48.8, 41.8, 40.7] },
 };
 
 test('demo songs keep their level and balance', () => {

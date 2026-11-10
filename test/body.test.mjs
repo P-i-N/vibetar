@@ -223,6 +223,20 @@ test('the response has no holes and no seam where the modelled range ends', () =
   }
 });
 
+// The steel-string is heard through a microphone and a recording chain that follow a reference
+// recording: no boom on the main top resonance, no hole below it, and a rise towards the highs.
+test('the steel-string microphones have the balance of a recording', () => {
+  const b = cachedBody('steel');
+  for (const ch of [0, 2, 4]) {
+    const bands = thirdOctaves(b.irs[ch], 100, 8100), at = (f) => bands.find(([fc]) => Math.abs(Math.log2(fc / f)) < 1 / 6)[1];
+    const mean = (lo, hi) => { const x = bands.filter(([f]) => f >= lo && f <= hi); return x.reduce((a, [, d]) => a + d, 0) / x.length; };
+    const top = at(200) - (at(159) + at(252)) / 2, hole = at(126) - (at(100) + at(159)) / 2, highs = mean(4800, 8100) - mean(450, 2100);
+    assert.ok(top < 8, `ch${ch}: the top resonance stands ${top.toFixed(1)} dB above the bands next to it`);
+    assert.ok(hole > -5, `ch${ch}: 126 Hz is ${hole.toFixed(1)} dB against the bands next to it`);
+    assert.ok(highs > 2 && highs < 12, `ch${ch}: 5-8 kHz is ${highs.toFixed(1)} dB against 500 Hz - 2 kHz`);
+  }
+});
+
 test('the zones together have unity gain over 150 Hz - 2 kHz', () => {
   const b = cachedBody('steel');
   let s = 0, c = 0;

@@ -6,7 +6,8 @@ import { MODEL_VERSION } from './body/model.js';
 
 const WORKLET_URL = new URL('./worklet.js', import.meta.url).href;
 const irCache = new Map();
-export const LEVELS = { steel: 1.35, nylon: 2.8, twelve: 1.564 };
+// (steel: 3.5 dB lower than before its microphone chain, which made it that much louder to the ear)
+export const LEVELS = { steel: 0.9, nylon: 2.8, twelve: 1.564 };
 // how much of the strings' along-top motion the direct (unamplified) string sound carries
 export const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6 };
 
