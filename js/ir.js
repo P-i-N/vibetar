@@ -17,7 +17,7 @@ function gaussian(rnd) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
 }
 
-function fft(re, im) {
+export function fft(re, im) {
   const n = re.length;
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1;
@@ -133,31 +133,32 @@ function bandDb(p, N, fs, f, oct) {
   return 10 * Math.log10(s / (hi - lo + 1) + 1e-30);
 }
 
-export function makeBodyIR(fs, type) {
-  const def = BODIES[type] || BODIES.steel;
-  const len = Math.floor(fs * 0.42);
-  const rnd = mulberry32(def.seed * 7919);
+// A field of resonances: `fixed` ones as given ([f, Q, dB]) plus a dense
+// field from `fromHz` upwards, calibrated so the smoothed response follows
+// `target` ([[Hz, dB], …]). Returns the two channels (Float64Array).
+function modeField(fs, len, target, seed, fromHz, fixed) {
+  const rnd = mulberry32(seed);
   const N = 1 << Math.ceil(Math.log2(len));
   const list = [];
   let alt = 1;
-  const add = (f, q, db, fixed) => {
+  const add = (f, q, db, isFixed) => {
     // neighbouring modes mostly alternate in sign -> no deep anti-resonances
     alt = -alt;
     // stereo: decorrelate the upper modes, keep the low end mono
     const wide = Math.max(0, Math.min(1, (f - 220) / 600));
     list.push({
-      f, q, db, fixed, sign: rnd() < 0.07 ? -alt : alt,
+      f, q, db, fixed: isFixed, sign: rnd() < 0.07 ? -alt : alt,
       gl: Math.pow(10, (wide * (rnd() * 7 - 3.5)) / 20), gr: Math.pow(10, (wide * (rnd() * 7 - 3.5)) / 20),
       pl: wide * (rnd() - 0.5) * 2.6, pr: wide * (rnd() - 0.5) * 2.6,
       sr: 1,
     });
   };
-  for (const [f, q, db] of def.modes) add(f, q, db, true);
+  for (const [f, q, db] of fixed) add(f, q, db, true);
   // dense field of weaker modes
-  let f = 232;
+  let f = fromHz;
   const top = Math.min(fs * 0.46, 21000);
   while (f < top) {
-    add(f, 18 + rnd() * 16 + Math.min(26, f / 160), interpTarget(def.target, f) - 8 + (rnd() * 4 - 2), false);
+    add(f, 18 + rnd() * 16 + Math.min(26, f / 160), interpTarget(target, f) - 8 + (rnd() * 4 - 2), false);
     f += 11 + rnd() * 20 + f * 0.004;
   }
   // calibrate the dense field so the smoothed response follows the target
@@ -166,11 +167,23 @@ export function makeBodyIR(fs, type) {
     for (let i = 0; i < pL.length; i++) pL[i] = 0.5 * (pL[i] + pR[i]);
     for (const m of list) {
       if (m.fixed) continue;
-      const err = interpTarget(def.target, m.f) - bandDb(pL, N, fs, m.f, 0.5);
+      const err = interpTarget(target, m.f) - bandDb(pL, N, fs, m.f, 0.5);
       m.db += Math.max(-12, Math.min(12, err)) * 0.85;
     }
   }
-  const L = renderModes(list, len, fs, 0), R = renderModes(list, len, fs, 1);
+  return { L: renderModes(list, len, fs, 0), R: renderModes(list, len, fs, 1) };
+}
+
+// the statistical high-frequency field on its own (used above the modelled body's range)
+export function denseField(fs, len, target, seed, fromHz) {
+  return modeField(fs, len, target, seed, fromHz, []);
+}
+export const bodyTarget = (type) => (BODIES[type] || BODIES.steel).target;
+
+export function makeBodyIR(fs, type) {
+  const def = BODIES[type] || BODIES.steel;
+  const len = Math.floor(fs * 0.42);
+  const { L, R } = modeField(fs, len, def.target, def.seed * 7919, 232, def.modes);
   // direct (string) radiation: broadband, without lows
   const direct = Math.pow(10, def.direct / 20);
   const hp = Math.exp((-2 * Math.PI * 400) / fs);

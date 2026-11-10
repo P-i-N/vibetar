@@ -144,3 +144,134 @@ test('above the modelled modes the bridge looks like a plate of the top\'s stiff
   assert.ok(g > 0.002 && g < 0.03, `conductance ${g} s/kg`);
   assert.ok(plateConductance(INSTRUMENTS.nylon) > g, 'the lighter classical top moves more');
 });
+
+// ---- what the microphones hear ---------------------------------------------------
+import { makeBodyIR } from '../js/ir.js';
+import { MODEL_VERSION } from '../js/body/model.js';
+import { FS, OPEN, midiHz, db, engine, render, cachedBody, convolve, rawSpectrum, aLevel } from './util.mjs';
+
+const ZONE = [0, 0, 1, 1, 2, 2]; // bridge zone of each string
+// correlation of two responses within a frequency band
+function bandCorr(a, b, lo, hi, fs = FS) {
+  const n = 65536, A = rawSpectrum(a, n), B = rawSpectrum(b, n);
+  let ab = 0, aa = 0, bb = 0;
+  for (let i = Math.ceil((lo * n) / fs); i < (hi * n) / fs; i++) {
+    ab += A.re[i] * B.re[i] + A.im[i] * B.im[i]; aa += A.re[i] ** 2 + A.im[i] ** 2; bb += B.re[i] ** 2 + B.im[i] ** 2;
+  }
+  return ab / Math.sqrt(aa * bb);
+}
+// mean power (dB) of a response per third-octave band
+function thirdOctaves(h, lo, hi, fs = FS) {
+  const n = 65536, S = rawSpectrum(h, n), out = [];
+  for (let fc = lo; fc <= hi; fc *= 2 ** (1 / 3)) {
+    let s = 0, c = 0;
+    for (let i = Math.floor((fc / 2 ** (1 / 6)) * n / fs); i < Math.ceil(fc * 2 ** (1 / 6) * n / fs); i++) { s += S.re[i] ** 2 + S.im[i] ** 2; c++; }
+    out.push([fc, 10 * Math.log10(s / c)]);
+  }
+  return out;
+}
+
+test('the classic body is unchanged', () => {
+  const ir = makeBodyIR(48000, 'steel');
+  let s = 0;
+  for (let i = 0; i < ir.L.length; i++) s += Math.abs(ir.L[i]);
+  assert.equal(ir.L.length, 20160);
+  assert.ok(Math.abs(s - 10.9627521629) < 1e-8, `checksum ${s}`);
+  assert.equal(ir.L[100], -0.004665404558181763);
+  assert.equal(ir.R[1000], 0.0007459166226908565);
+});
+
+test('the body builds within the time budget and reports its resonances', () => {
+  const b = cachedBody('steel');
+  assert.ok(b.info.ms < 8000, `built in ${b.info.ms} ms`);
+  assert.equal(b.version, MODEL_VERSION);
+  assert.ok(b.info.air > 90 && b.info.air < 110 && b.info.top > 170 && b.info.top < 215);
+  assert.equal(b.irs.length, 8);
+  assert.equal(b.bridge.K, 24);
+  assert.equal(b.bridge.phi.length, 6 * 24);
+  assert.ok(b.bridge.gRes > 0 && b.bridge.z.length === 6);
+});
+
+test('impulse responses are finite, decay, and carry no DC', () => {
+  const b = cachedBody('steel');
+  for (const h of b.irs) {
+    assert.equal(h.length, Math.floor(0.42 * FS));
+    let pk = 0, at = 0, sum = 0, abs = 0;
+    for (let i = 0; i < h.length; i++) { assert.ok(Number.isFinite(h[i])); if (Math.abs(h[i]) > pk) { pk = Math.abs(h[i]); at = i; } sum += h[i]; abs += Math.abs(h[i]); }
+    assert.ok(at < 0.005 * FS, `peak at ${(at / FS * 1000).toFixed(2)} ms`);
+    let tail = 0;
+    for (let i = h.length - Math.floor(0.03 * FS); i < h.length; i++) tail = Math.max(tail, Math.abs(h[i]));
+    assert.ok(db(tail / pk) < -60, `tail ${db(tail / pk).toFixed(1)} dB`);
+    assert.ok(Math.abs(sum) < 1e-3 * abs, `DC ${sum / abs}`);
+  }
+});
+
+test('stereo: the microphones agree in the bass and differ above', () => {
+  for (const name of ['steel', 'nylon']) {
+    const b = cachedBody(name);
+    assert.ok(bandCorr(b.irs[2], b.irs[3], 60, 150) > 0.9, `${name} bass correlation ${bandCorr(b.irs[2], b.irs[3], 60, 150)}`);
+    assert.ok(Math.abs(bandCorr(b.irs[2], b.irs[3], 800, 3000)) < 0.6, `${name} mid correlation ${bandCorr(b.irs[2], b.irs[3], 800, 3000)}`);
+  }
+});
+
+test('the three bridge zones differ above 1 kHz but not below 300 Hz', () => {
+  const b = cachedBody('steel');
+  assert.ok(bandCorr(b.irs[0], b.irs[4], 60, 300) > 0.95, `low ${bandCorr(b.irs[0], b.irs[4], 60, 300)}`);
+  assert.ok(Math.abs(bandCorr(b.irs[0], b.irs[4], 1000, 3000)) < 0.8, `high ${bandCorr(b.irs[0], b.irs[4], 1000, 3000)}`);
+});
+
+test('the response has no holes and no seam where the modelled range ends', () => {
+  for (const name of ['steel', 'nylon', 'twelve']) {
+    const b = cachedBody(name);
+    for (const ch of [2, 3]) {
+      const bands = thirdOctaves(b.irs[ch], 100, 8000);
+      const ref = bands.filter(([f]) => f >= 150 && f <= 2000);
+      // against the typical (dB-mean) level: the main top resonance stands well above it, as on a real guitar
+      const mean = ref.reduce((a, [, d]) => a + d, 0) / ref.length;
+      for (const [f, d] of bands) assert.ok(d - mean < 16 && d - mean > -20, `${name} ch${ch} ${f.toFixed(0)} Hz: ${(d - mean).toFixed(1)} dB`);
+      for (let i = 1; i < bands.length; i++) if (bands[i][0] > 3000 && bands[i][0] < 5500) assert.ok(Math.abs(bands[i][1] - bands[i - 1][1]) < 6, `${name} seam at ${bands[i][0].toFixed(0)} Hz: ${(bands[i][1] - bands[i - 1][1]).toFixed(1)} dB`);
+    }
+  }
+});
+
+test('the zones together have unity gain over 150 Hz - 2 kHz', () => {
+  const b = cachedBody('steel');
+  let s = 0, c = 0;
+  for (let z = 0; z < 6; z++) for (const [, d] of thirdOctaves(b.irs[z], 150, 2000)) { s += 10 ** (d / 10); c++; }
+  assert.ok(Math.abs(10 * Math.log10(s / c)) < 1.5, `${10 * Math.log10(s / c)} dB`);
+});
+
+// Without the strings feeling the bridge, a partial sitting on a body resonance keeps feeding
+// it, which exaggerates those notes; the tighter check comes with the coupled bridge.
+test('note loudness across the range stays within bounds', () => {
+  const b = cachedBody('steel');
+  const lv = [];
+  for (let m = 40; m <= 84; m++) {
+    let s = 5;
+    while (s > 0 && OPEN[s] > m) s--;
+    if (m - OPEN[s] > 4 && s < 5 && m >= OPEN[s + 1]) s++;
+    const e = engine();
+    e.post({ type: 'n', t: 0.02, s, f: midiHz(m), v: 0.8, k: '', fr: m > OPEN[s], d: 1 });
+    lv.push(aLevel(convolve(render(e, 1), b.irs[ZONE[s] * 2]), 0, 16384));
+  }
+  const mean = lv.reduce((a, c) => a + c) / lv.length;
+  const sd = Math.sqrt(lv.reduce((a, c) => a + (c - mean) ** 2, 0) / lv.length);
+  assert.ok(sd <= 5.0, `standard deviation ${sd.toFixed(2)} dB: ${lv.map((v) => (v - mean).toFixed(0)).join(' ')}`);
+});
+
+test('44.1 kHz and 96 kHz bodies have the same resonances', () => {
+  const ref = cachedBody('steel');
+  for (const fs of [44100, 96000]) {
+    const b = cachedBody('steel', fs);
+    assert.ok(Math.abs(b.info.air / ref.info.air - 1) < 0.005 && Math.abs(b.info.top / ref.info.top - 1) < 0.005);
+    assert.equal(b.irs[0].length, Math.floor(0.42 * fs));
+    assert.ok(bandCorr(b.irs[2], b.irs[3], 60, 150, fs) > 0.9);
+  }
+});
+
+test('building the body twice gives identical responses', async () => {
+  const { buildBody } = await import('../js/body/model.js');
+  const a = cachedBody('nylon'), b = buildBody('nylon', FS);
+  for (let c = 0; c < 8; c++) assert.deepEqual(a.irs[c], b.irs[c]);
+  assert.deepEqual([...a.bridge.phi], [...b.bridge.phi]);
+});

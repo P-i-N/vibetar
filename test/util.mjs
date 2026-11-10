@@ -91,3 +91,43 @@ export function centroid(x, t0, t1, fs = FS) {
   for (let i = Math.ceil((60 * n) / fs); i < (12000 * n) / fs; i++) { a += i * m[i]; b += m[i]; }
   return ((a / b) * fs) / n;
 }
+
+// ---- body helpers ----------------------------------------------------------------
+import { buildBody } from '../js/body/model.js';
+
+const bodies = new Map();
+// the modelled body of an instrument, built once per test process
+export function cachedBody(name, fs = FS) {
+  const key = `${name}:${fs}`;
+  if (!bodies.has(key)) bodies.set(key, buildBody(name, fs));
+  return bodies.get(key);
+}
+
+export function convolve(x, h) {
+  let n = 1;
+  while (n < x.length + h.length) n <<= 1;
+  const ar = new Float64Array(n), ai = new Float64Array(n), br = new Float64Array(n), bi = new Float64Array(n);
+  ar.set(x); br.set(h); fft(ar, ai); fft(br, bi);
+  for (let i = 0; i < n; i++) { const r = ar[i] * br[i] - ai[i] * bi[i]; ai[i] = -(ar[i] * bi[i] + ai[i] * br[i]); ar[i] = r; }
+  fft(ar, ai);
+  const out = new Float64Array(x.length + h.length);
+  for (let i = 0; i < out.length; i++) out[i] = ar[i] / n;
+  return out;
+}
+
+// complex spectrum of the first n samples of x (no window): { re, im }
+export function rawSpectrum(x, n) {
+  const re = new Float64Array(n), im = new Float64Array(n);
+  re.set(x.length > n ? x.subarray(0, n) : x);
+  fft(re, im);
+  return { re, im };
+}
+
+const aWeight = (f) => { const f2 = f * f; return ((12194 ** 2 * f2 * f2) / ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2))) * 1.2589; };
+// A-weighted level (dB) of n samples of x starting at `start`
+export function aLevel(x, start, n, fs = FS) {
+  const m = spectrum(x, start, n);
+  let s = 0;
+  for (let i = 1; i < n / 2; i++) { const a = aWeight((i * fs) / n) * m[i]; s += a * a; }
+  return db((Math.sqrt(s) / n) * 4);
+}
