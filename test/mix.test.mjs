@@ -23,7 +23,6 @@ function stats(x) {
 test('demo songs keep their level and balance on the modelled body', () => {
   for (const d of S.DEMOS) {
     const song = d.make();
-    if (song.inst.preset === 'bowed') continue;
     const c = stats(renderMix(song, false)), m = stats(renderMix(song, true));
     assert.ok(Math.abs(m.rms - c.rms) < 3, `${song.title}: level ${(m.rms - c.rms).toFixed(1)} dB from classic`);
     // at the default master volume (0.8) only the tips of the loudest attacks reach into the soft

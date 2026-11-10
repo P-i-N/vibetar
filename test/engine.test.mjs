@@ -121,7 +121,7 @@ test('slides add friction noise while the finger moves', () => {
 });
 
 test('combined techniques and a storm of events stay bounded', () => {
-  for (const preset of ['steel', 'nylon', 'twelve', 'bowed']) {
+  for (const preset of ['steel', 'nylon', 'twelve']) {
     const e = engine({ preset, symp: 1, fingerNoise: 1 });
     let seed = 7;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;

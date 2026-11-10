@@ -363,7 +363,6 @@ async function preview(s, cell) {
   await audio.init();
   const t = audio.time + 0.02;
   const evs = [S.cellEvent(song, s, { f: cell.f, t: (cell.t || '').replace(/[hs]/g, '') }, t, 0.8, 1)];
-  if (song.inst.preset === 'bowed') evs.push({ type: 'o', t: t + 0.7, s });
   audio.send(evs);
 }
 
@@ -401,7 +400,6 @@ function schedule() {
       if (player.loop) { player.from = from; player.to = to; player.step = from; }
       else {
         player.ended = true; player.endTime = player.nextTime;
-        if (song.inst.preset === 'bowed') for (let s = 0; s < 6; s++) events.push({ type: 'o', t: player.nextTime, s });
         break;
       }
     }
@@ -419,7 +417,7 @@ function stop(silent) {
   player.playing = false; player.queue = [];
   $('play').classList.remove('on'); $('playIco').textContent = '▶'; $('playLbl').textContent = 'Play';
   setPlayCol(-1);
-  if (!silent || song.inst.preset === 'bowed') audio.hush();
+  if (!silent) audio.hush();
   else audio.graph && audio.graph.node.port.postMessage({ type: 'flush' });
 }
 
@@ -507,18 +505,16 @@ function fxChanged(slow) {
 function buildSettings() {
   const I = $('instSliders');
   const inst = (k) => [() => song.inst[k], (v) => { song.inst[k] = v; audio.syncInstrument(); }];
-  const plucked = (p) => p !== 'bowed';
-  mkSlider(I, ...inst('pickPos'), (p) => (p === 'bowed' ? 'Bow position' : 'Pick position'), 0.06, 0.4, 0.005, pct);
-  mkSlider(I, ...inst('pickHard'), (p) => (p === 'bowed' ? 'Bow pressure' : 'Attack'), 0, 1, 0.01, pct);
-  mkSlider(I, ...inst('bright'), 'Brightness', -1, 1, 0.02, signed, plucked);
-  mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed, plucked);
-  mkSlider(I, ...inst('vibrato'), 'Vibrato', 0, 2, 0.02, pct, (p) => p === 'bowed');
+  mkSlider(I, ...inst('pickPos'), 'Pick position', 0.06, 0.4, 0.005, pct);
+  mkSlider(I, ...inst('pickHard'), 'Attack', 0, 1, 0.01, pct);
+  mkSlider(I, ...inst('bright'), 'Brightness', -1, 1, 0.02, signed);
+  mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed);
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
   // how strongly strings feel each other: through the modelled bridge, or the classic body's simple junction
-  mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct, (p, i) => p !== 'bowed' && !!i.bodyModel);
-  mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, (p, i) => p !== 'bowed' && !i.bodyModel);
-  mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct, plucked);
-  mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms', plucked);
+  mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct, (p, i) => !!i.bodyModel);
+  mkSlider(I, ...inst('symp'), 'Sympathetic', 0, 1, 0.01, pct, (p, i) => !i.bodyModel);
+  mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct);
+  mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms');
   mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
 
   const fx = (k, slow) => [() => song.fx[k], (v) => { song.fx[k] = v; fxChanged(slow); }];
@@ -552,8 +548,6 @@ function buildSettings() {
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.dataset.preset === song.inst.preset) return;
-    const wasBowed = song.inst.preset === 'bowed';
-    if (player.playing && wasBowed) audio.hush();
     song.inst = { ...S.INSTRUMENTS[b.dataset.preset] };
     syncInstControls(); audio.syncInstrument(); scheduleSave();
   });
@@ -585,8 +579,6 @@ function buildSettings() {
 
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
-  $('picking').hidden = song.inst.preset === 'bowed';
-  $('bodyModelRow').hidden = song.inst.preset === 'bowed';
   for (const b of $('bodyModel').children) b.classList.toggle('on', +b.dataset.v === (song.inst.bodyModel ? 1 : 0));
   for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
   for (const r of sliders) r();

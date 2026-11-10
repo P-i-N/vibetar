@@ -6,9 +6,9 @@ import { MODEL_VERSION } from './body/model.js';
 
 const WORKLET_URL = new URL('./worklet.js', import.meta.url).href;
 const irCache = new Map();
-export const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7, bowed: 1.25 };
+export const LEVELS = { steel: 1.35, nylon: 2.0, twelve: 1.7 };
 // how much of the strings' along-top motion the classic body lets through
-export const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6, bowed: 0 };
+export const MIX_H = { steel: 0.6, nylon: 0.55, twelve: 0.6 };
 // level of the modelled body against the classic one, so switching does not change the loudness
 export const MODEL_TRIM = { steel: 1.0, nylon: 1.4, twelve: 0.92 };
 const MODELLED = new Set(['steel', 'nylon', 'twelve']);
@@ -333,7 +333,6 @@ export async function renderSong(song, rnd, sampleRate = 48000) {
   const ctx = new OfflineAudioContext(2, Math.ceil(dur * sampleRate), sampleRate);
   await ctx.audioWorklet.addModule(WORKLET_URL);
   const events = songEvents(song, 0, n, lead, rnd);
-  if (song.inst.preset === 'bowed') for (let s = 0; s < 6; s++) events.push({ type: 'o', t: lead + n * stepDur, s });
   const node = new AudioWorkletNode(ctx, 'vibetar-strings', {
     numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [6],
     processorOptions: { cfg: { ...engineCfg(song.inst, song), bridge: body ? body.bridge : null }, events },

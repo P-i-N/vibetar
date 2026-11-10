@@ -34,12 +34,12 @@ export function toggleFlag(t, flag) {
 }
 
 export const INSTRUMENTS = {
-  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.4 },
-  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, vibrato: 1, fingerNoise: 0.25, picking: 2, bodyModel: 1, coupling: 0.3 },
-  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, vibrato: 1, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.3 },
-  bowed: { preset: 'bowed', pickPos: 0.15, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 0, human: 0.2, vibrato: 1, fingerNoise: 0, picking: 0, bodyModel: 0, coupling: 1 },
+  steel: { preset: 'steel', pickPos: 0.17, pickHard: 0.72, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 14, human: 0.35, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.4 },
+  nylon: { preset: 'nylon', pickPos: 0.2, pickHard: 0.5, bright: 0, sustain: 0, body: 0.9, symp: 0.3, strum: 18, human: 0.35, fingerNoise: 0.25, picking: 2, bodyModel: 1, coupling: 0.3 },
+  twelve: { preset: 'twelve', pickPos: 0.16, pickHard: 0.75, bright: 0, sustain: 0, body: 0.85, symp: 0.3, strum: 16, human: 0.35, fingerNoise: 0.3, picking: 0, bodyModel: 1, coupling: 0.3 },
 };
-const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', 'vibrato', 'fingerNoise', 'picking', 'bodyModel', 'coupling'];
+// Order of the settings in a link. A retired setting keeps its place (null), so old links still load.
+const INST_KEYS = ['pickPos', 'pickHard', 'bright', 'sustain', 'body', 'symp', 'strum', 'human', null, 'fingerNoise', 'picking', 'bodyModel', 'coupling'];
 // picking techniques, by inst.picking
 export const PICKING = ['pick', 'flesh', 'nailS', 'nailL', 'hybrid'];
 // number of wound strings, counted from the lowest
@@ -138,7 +138,7 @@ export function packSong(song) {
   return {
     v: 1, t: song.title, b: song.bpm, g: [song.spb, song.bpb, song.bars],
     u: song.tuning, c: song.capo, n: notesToString(song),
-    i: [song.inst.preset, ...INST_KEYS.map((k) => r3(song.inst[k]))],
+    i: [song.inst.preset, ...INST_KEYS.map((k) => (k ? r3(song.inst[k]) : 0))],
     x: FX_KEYS.map((k) => (typeof song.fx[k] === 'number' ? r3(song.fx[k]) : typeof song.fx[k] === 'boolean' ? +song.fx[k] : song.fx[k])),
   };
 }
@@ -158,7 +158,7 @@ export function unpackSong(p) {
   if (Array.isArray(p.i)) {
     const base = INSTRUMENTS[p.i[0]] || INSTRUMENTS.steel;
     song.inst = { ...base };
-    INST_KEYS.forEach((k, j) => { song.inst[k] = num(p.i[j + 1], -1, 60, base[k]); });
+    INST_KEYS.forEach((k, j) => { if (k) song.inst[k] = num(p.i[j + 1], -1, 60, base[k]); });
   }
   if (Array.isArray(p.x)) {
     FX_KEYS.forEach((k, j) => {
@@ -319,8 +319,7 @@ export function stepEvents(song, step, t, rnd, perf) {
   const stepDur = 60 / song.bpm / spb;
   const pos = step % bar, inBeat = pos % spb;
   const chord = chordAt(song, step);
-  const plucked = inst.preset !== 'bowed';
-  const technique = plucked ? inst.picking || 0 : -1;
+  const technique = inst.picking || 0;
   const last = perf.last;
   // strum direction: down on the beat, up on the off-beats
   let down = true;
@@ -357,25 +356,23 @@ export function stepEvents(song, step, t, rnd, perf) {
     const q = fingerTravel(song, step, s, cell, tt, stepDur, rnd);
     if (q) out.push(q);
     const ev = cellEvent(song, s, cell, tt, vel, down ? 1 : -1);
-    if (plucked) {
-      // who plays it: 0 thumb, 1 index, 2 middle, 3 ring, 4 the pick
-      let finger = 4;
-      const fingers = technique >= 1 && technique <= 3 ? true : technique === 4 && s >= 3;
-      if (fingers) {
-        if (s < 3) finger = 0;
-        else if (sounding.filter((x) => x >= 3).length > 1) finger = s - 2;       // one finger per string
-        else finger = last.finger === 1 ? 2 : 1;                                   // alternate
-        if (finger) last.finger = finger;
-      }
-      ev.fi = finger;
-      ev.fg = finger === 4 ? 0 : finger === 0 && technique !== 4 ? 4 : technique === 4 ? 2 : technique;
-      ev.v *= FINGER_STRENGTH[finger] * (finger !== 4 && tt - last.fingerT[finger] < 0.12 ? 0.9 : 1);
-      last.fingerT[finger] = tt;
-      if (accent) ev.rs = true;
-      if (h > 0) ev.pp = Math.round(h * perf.drift.p * 100) / 100;
-      const gap = gapBefore(song, step, s, stepDur);
-      if (gap) ev.gap = gap;
+    // who plays it: 0 thumb, 1 index, 2 middle, 3 ring, 4 the pick
+    let finger = 4;
+    const fingers = technique >= 1 && technique <= 3 ? true : technique === 4 && s >= 3;
+    if (fingers) {
+      if (s < 3) finger = 0;
+      else if (sounding.filter((x) => x >= 3).length > 1) finger = s - 2;       // one finger per string
+      else finger = last.finger === 1 ? 2 : 1;                                   // alternate
+      if (finger) last.finger = finger;
     }
+    ev.fi = finger;
+    ev.fg = finger === 4 ? 0 : finger === 0 && technique !== 4 ? 4 : technique === 4 ? 2 : technique;
+    ev.v *= FINGER_STRENGTH[finger] * (finger !== 4 && tt - last.fingerT[finger] < 0.12 ? 0.9 : 1);
+    last.fingerT[finger] = tt;
+    if (accent) ev.rs = true;
+    if (h > 0) ev.pp = Math.round(h * perf.drift.p * 100) / 100;
+    const gap = gapBefore(song, step, s, stepDur);
+    if (gap) ev.gap = gap;
     out.push(ev);
   });
   return out;
@@ -485,20 +482,6 @@ function romance() {
   return song;
 }
 
-function aria() {
-  const song = make('Slow Air (bowed)', 60, 2, 4, 8, { preset: 'bowed' }, { revMix: 0.4, revSize: 3.6, revTone: 0.45 });
-  const n = (bar, st, s, f, t) => put(song, bar * 8 + st, s, f, t);
-  n(0, 0, 2, 0); n(0, 0, 4, 3); n(0, 4, 4, 5, 'h'); n(0, 6, 4, 6, 'h');
-  n(1, 0, 1, 0); n(1, 0, 4, '.'); n(1, 0, 5, 5, 'v'); n(1, 4, 5, 3, 'h'); n(1, 6, 5, 1, 'h');
-  n(2, 0, 1, 1); n(2, 0, 5, '.'); n(2, 0, 4, 6); n(2, 4, 4, 5, 'h'); n(2, 6, 4, 3, 'h');
-  n(3, 0, 1, 0); n(3, 0, 4, 2, 'v'); n(3, 6, 4, '.');
-  n(4, 0, 2, 0); n(4, 0, 5, 5); n(4, 2, 5, 6, 'h'); n(4, 4, 5, 5, 'h'); n(4, 6, 5, 3, 'h');
-  n(5, 0, 0, 3); n(5, 0, 2, '.'); n(5, 0, 5, 1); n(5, 4, 5, 3, 'h'); n(5, 6, 5, 5, 's');
-  n(6, 0, 1, 0); n(6, 0, 0, '.'); n(6, 0, 5, 1); n(6, 4, 5, 0, 'h'); n(6, 6, 5, '.'); n(6, 6, 4, 2);
-  n(7, 0, 2, 0); n(7, 0, 1, '.'); n(7, 0, 4, 3, 'v');
-  return song;
-}
-
 function nightDrive() {
   const song = make('Night Drive', 112, 4, 4, 5, { preset: 'steel', pickHard: 0.8, fingerNoise: 0.45 }, { revMix: 0.2, revSize: 1.6, dlyOn: true, dlyTime: '8d', dlyMix: 0.1, dlyFb: 0.25 });
   const chug = (bar, steps, fret = 0) => { for (const st of steps) put(song, bar * 16 + st, 0, fret, 'm'); };
@@ -518,5 +501,4 @@ export const DEMOS = [
   { name: 'Romance — classical nylon', make: romance },
   { name: 'Campfire — 12-string strumming', make: campfire },
   { name: 'Night Drive — palm mutes, harmonics', make: nightDrive },
-  { name: 'Slow Air — bowed strings', make: aria },
 ];

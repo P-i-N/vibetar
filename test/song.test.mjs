@@ -103,7 +103,6 @@ test('no finger travel without a real shift', () => {
   none((s) => { S.setCell(s, 0, 5, { f: 5, t: '' }); S.setCell(s, 4, 5, { f: 7, t: '' }); });   // another finger reaches it
   none((s) => { S.setCell(s, 0, 1, { f: 3, t: '' }); S.setCell(s, 4, 1, { f: 8, t: 'h' }); });  // hammer-on
   none((s) => { S.setCell(s, 4, 1, { f: 8, t: '' }); });                                          // nothing before
-  none((s) => { s.inst.preset = 'bowed'; S.setCell(s, 0, 1, { f: 3, t: '' }); S.setCell(s, 4, 1, { f: 8, t: '' }); });
 });
 
 test('palm mute runs are found for the P.M. brackets', () => {
@@ -120,7 +119,6 @@ test('palm mute runs are found for the P.M. brackets', () => {
 test('the body model setting defaults to modelled and survives the link', async () => {
   assert.equal(S.INSTRUMENTS.steel.bodyModel, 1);
   assert.equal(S.INSTRUMENTS.nylon.bodyModel, 1);
-  assert.equal(S.INSTRUMENTS.bowed.bodyModel, 0);
   const song = S.newSong();
   song.inst.bodyModel = 0;
   assert.equal((await S.decodeSong(await S.encodeSong(song))).inst.bodyModel, 0);

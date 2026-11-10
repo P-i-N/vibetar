@@ -1,4 +1,4 @@
-// Vibetar string engine — physically modelled plucked & bowed strings.
+// Vibetar string engine — physically modelled plucked strings.
 //
 // Plucked strings are digital waveguides (extended Karplus-Strong) with:
 //   * two transverse polarisations per string (slightly detuned, different
@@ -66,7 +66,6 @@ function designDamping(f0, b1, b3, fs) {
 
 const PRESETS = {
   steel: {
-    mode: 'pluck',
     b1: [0.50, 0.55, 0.62, 0.72, 0.80, 0.90],
     b3: [4.6e-7, 4.3e-7, 4.0e-7, 3.8e-7, 2.6e-7, 2.4e-7],
     apN: [4, 4, 3, 2, 0, 0],
@@ -78,7 +77,6 @@ const PRESETS = {
     tied: [1, 1, 1, 0.6, 1.2, 1.2],
   },
   nylon: {
-    mode: 'pluck',
     b1: [0.95, 1.0, 1.1, 1.5, 1.65, 1.8],
     b3: [1.0e-6, 0.95e-6, 0.9e-6, 1.3e-6, 1.2e-6, 1.1e-6],
     apN: [1, 1, 1, 0, 0, 0],
@@ -87,7 +85,6 @@ const PRESETS = {
     mixH: 0.55, polCents: 0.7, pickNoise: 0.04, wound: 3,
   },
   twelve: {
-    mode: 'pluck',
     b1: [0.55, 0.6, 0.68, 0.78, 0.85, 0.95],
     b3: [5.0e-7, 4.6e-7, 4.3e-7, 4.0e-7, 2.8e-7, 2.6e-7],
     apN: [4, 4, 3, 2, 0, 0],
@@ -101,7 +98,6 @@ const PRESETS = {
     pairB3: [3.6e-7, 3.4e-7, 3.2e-7, 3.0e-7, 3.4e-7, 3.0e-7],
     pairGain: [0.62, 0.62, 0.6, 0.58, 0.7, 0.66],
   },
-  bowed: { mode: 'bow', gain: [1.0, 1.0, 0.95, 0.9, 0.85, 0.8] },
 };
 
 const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -653,134 +649,6 @@ class PluckVoice {
   }
 }
 
-// ---- bowed string voice (stick-slip friction waveguide) -------------------
-
-class BowVoice {
-  constructor(fs, rnd) {
-    this.fs = fs; this.rnd = rnd;
-    const size = 1 << Math.ceil(Math.log2(fs / 28 + 16));
-    this.mask = size - 1;
-    this.nb = new Float64Array(size); this.bb = new Float64Array(size);
-    this.w = 0;
-    this.nOut = 0; this.bOut = 0;
-    this.lp = 0;
-    this.pole = 0.75 - (0.2 * 22050) / fs;
-    this.env = 0; this.envT = 0; this.atk = 1 / (0.07 * fs); this.rel = 1 / (0.22 * fs);
-    this.maxVel = 0.1; this.slope = 3; this.beta = 0.127;
-    this.nD = 100; this.bD = 29; this.nDinc = 0; this.bDinc = 0;
-    this.openF = 110; this.ratio = 1; this.gain = 1;
-    this.freq = 110; this.curFreq = 110; this.sounding = false;
-    this.gFrom = 0; this.gT0 = 0; this.gDur = 0.1; this.gStep = false;
-    this.bendAmt = 0; this.bendT0 = 0; this.bendRise = 0.25;
-    this.vibDepth = 0; this.vibT0 = 0; this.vibRate = 5.6;
-    this.noise = 0; this.tune = 3.7;
-  }
-
-  targets(f) {
-    f = clamp(f, 30, this.fs * 0.2);
-    this.curFreq = f;
-    const base = Math.max(6, this.fs / f - this.tune + 0.12 * Math.min(1, f / 900));
-    return base;
-  }
-
-  retune(f, immediate, n) {
-    const base = this.targets(f);
-    const b = Math.max(1.5, base * this.beta), nk = Math.max(1.5, base - b);
-    if (immediate) { this.bD = b; this.nD = nk; this.bDinc = 0; this.nDinc = 0; }
-    else { this.bDinc = (b - this.bD) / n; this.nDinc = (nk - this.nD) / n; }
-  }
-
-  noteOn(ev, P, t) {
-    const k = ev.k || '';
-    const has = (c) => k.indexOf(c) >= 0;
-    const tech = k === 'x' ? 'x' : has('s') ? 's' : has('h') ? 'h' : has('b') ? 'b' : has('v') ? 'v' : '';
-    const pm = has('m');
-    let f = ev.f * this.ratio;
-    // flageolet: the nearest partial with a node under the finger
-    if (has('*') && ev.hb > 0) f *= Math.max(1, Math.round(1 / Math.min(ev.hb, 1 - ev.hb)));
-    this.slope = 5 - 4 * clamp(0.35 + 0.5 * P.pickHard, 0, 1);
-    this.beta = clamp(0.05 + P.pickPos * 0.55, 0.06, 0.3);
-    const legato = this.sounding && this.env > 0.2;
-    this.bendAmt = 0; this.vibDepth = 0; this.gFrom = 0;
-    if (legato) {
-      const from = 12 * Math.log2(this.curFreq / f);
-      this.gFrom = from; this.gT0 = t; this.gStep = false;
-      this.gDur = tech === 's' ? clamp(0.04 * Math.abs(from), 0.08, 0.35) : 0.025;
-      this.freq = f;
-      if (tech !== 'h' && tech !== 's') this.env *= 0.55; // re-articulate
-    } else {
-      this.freq = f;
-      this.retune(f, true, 1);
-    }
-    let vel = ev.v;
-    if (pm || tech === 'x') vel *= 0.6;
-    this.maxVel = 0.03 + 0.12 * vel;
-    // empirical compensation of loop filter + friction-junction delay
-    this.tune = 3.8 - 0.08 / Math.max(0.3, vel);
-    this.envT = 1;
-    this.atk = 1 / ((tech === 'x' ? 0.015 : 0.09 - 0.05 * vel) * this.fs);
-    if (tech === 'b') { this.bendAmt = 2; this.bendT0 = t + 0.05; }
-    this.vibDepth = (tech === 'v' ? 0.5 : 0.22) * P.bowVib;
-    this.vibT0 = t + (tech === 'v' ? 0.12 : 0.28);
-    this.vibRate = 5.2 + 0.8 * this.rnd();
-    this.sounding = true;
-    if (tech === 'x') { this.envT = 0; this.env = 0.9; this.sounding = false; }
-  }
-
-  mute(fast) {
-    this.sounding = false; this.envT = 0;
-    this.rel = 1 / ((fast ? 0.08 : 0.2) * this.fs);
-  }
-
-  rest() { this.sounding = false; this.envT = 0; this.env = 0; }
-
-  updateMod(t, n) {
-    let semis = 0;
-    if (this.gFrom !== 0) {
-      const p = (t - this.gT0) / this.gDur;
-      if (p >= 1) this.gFrom = 0; else semis += this.gFrom * (1 - Math.max(0, p));
-    }
-    if (this.bendAmt !== 0) {
-      const p = clamp((t - this.bendT0) / this.bendRise, 0, 1);
-      semis += this.bendAmt * p * p * (3 - 2 * p);
-    }
-    if (this.vibDepth !== 0) {
-      const tt = t - this.vibT0;
-      if (tt > 0) semis += this.vibDepth * Math.min(1, tt / 0.4) * Math.sin(TAU * this.vibRate * tt);
-    }
-    this.retune(this.freq * Math.pow(2, semis / 12), false, n);
-  }
-
-  tick() {
-    const m = this.mask;
-    if (this.env < this.envT) { this.env += this.atk; if (this.env > this.envT) this.env = this.envT; }
-    else if (this.env > this.envT) { this.env -= this.rel; if (this.env < this.envT) this.env = this.envT; }
-    this.noise = 0.9 * this.noise + 0.1 * (2 * this.rnd() - 1);
-    const bowVel = this.maxVel * this.env * (1 + 0.5 * this.noise);
-    this.lp = (1 - this.pole) * 0.95 * this.bOut + this.pole * this.lp;
-    const bridgeRefl = -this.lp;
-    const nutRefl = -this.nOut;
-    const dv = bowVel - (bridgeRefl + nutRefl);
-    let o = Math.abs((dv + 0.001) * this.slope) + 0.75;
-    o = 1 / (o * o * o * o);
-    if (o > 0.98) o = 0.98; else if (o < 0.01) o = 0.01;
-    const nv = dv * o;
-    let a = bridgeRefl + nv, b = nutRefl + nv;
-    if (a < 1e-18 && a > -1e-18) a = 0;
-    if (b < 1e-18 && b > -1e-18) b = 0;
-    this.nb[this.w] = a; this.bb[this.w] = b;
-    // linear-interpolated reads
-    let d = (this.nD += this.nDinc), n0 = d | 0, fr = d - n0, i = this.w - n0;
-    this.nOut = this.nb[i & m] * (1 - fr) + this.nb[(i - 1) & m] * fr;
-    d = (this.bD += this.bDinc); n0 = d | 0; fr = d - n0; i = this.w - n0;
-    this.bOut = this.bb[i & m] * (1 - fr) + this.bb[(i - 1) & m] * fr;
-    this.w = (this.w + 1) & m;
-    return this.bOut * this.gain;
-  }
-
-  clear() { this.nb.fill(0); this.bb.fill(0); this.lp = 0; this.nOut = 0; this.bOut = 0; this.env = 0; this.envT = 0; }
-}
-
 // ---- the bridge ---------------------------------------------------------------
 // With a modelled body the strings are not tied to a rigid bridge but to the
 // body's lowest resonances. Every string loop (towards-top and along-top
@@ -919,7 +787,6 @@ class VibetarEngine {
     this.queue = [];
     this.voices = [];
     this.pairs = null;
-    this.mode = 'pluck';
     this.preset = '';
     this.alpha = 0;
     this.dcx = new Float64Array(6); this.dcy = new Float64Array(6);
@@ -928,7 +795,7 @@ class VibetarEngine {
     this.dcR = 1 - (TAU * 18) / fs;
     this.outGain = 0.3;
     this.pairGap = Math.round(0.011 * fs);
-    this.P = { pickPos: 0.17, pickHard: 0.72, pickNoise: 0.1, b1Scale: 1, b3Scale: 1, bowVib: 1, fingerNoise: 0.3, pick: 0 };
+    this.P = { pickPos: 0.17, pickHard: 0.72, pickNoise: 0.1, b1Scale: 1, b3Scale: 1, fingerNoise: 0.3, pick: 0 };
     this.configure({ preset: 'steel', open: [40, 45, 50, 55, 59, 64] });
   }
 
@@ -942,24 +809,20 @@ class VibetarEngine {
     if (c.pickHard != null) P.pickHard = clamp(c.pickHard, 0, 1);
     if (c.sustain != null) P.b1Scale = Math.pow(3, -clamp(c.sustain, -1, 1));
     if (c.bright != null) P.b3Scale = Math.pow(5, -clamp(c.bright, -1, 1));
-    if (c.vibrato != null) P.bowVib = clamp(c.vibrato, 0, 2);
     if (c.fingerNoise != null) P.fingerNoise = clamp(c.fingerNoise, 0, 1);
     if (c.pick != null) P.pick = clamp(Math.round(c.pick), 0, 4);
     P.pickNoise = pr.pickNoise || 0;
-    this.mode = pr.mode;
     this.mixH = pr.mixH || 0;
     const nPair = pr.pair ? 6 : 0;
     const hadBridge = !!this.bridge;
     if ('bridge' in c) this.bridgeData = c.bridge || null;
     if (c.tune) this.tune = c.tune;
     if (c.coupling != null) this.coupling = clamp(c.coupling, 0, 1);
-    this.alpha = this.mode === 'pluck' ? clamp(c.symp != null ? c.symp : 0.3, 0, 1) * 0.0035 : 0;
+    this.alpha = clamp(c.symp != null ? c.symp : 0.3, 0, 1) * 0.0035;
     if (rebuild) {
       this.preset = c.preset;
       this.voices = [];
-      for (let i = 0; i < 6 + nPair; i++) {
-        this.voices.push(this.mode === 'bow' ? new BowVoice(fs, this.rnd) : new PluckVoice(fs, this.rnd));
-      }
+      for (let i = 0; i < 6 + nPair; i++) this.voices.push(new PluckVoice(fs, this.rnd));
       this.pairs = pr.pair ? true : null;
     }
     const open = c.open || this.open || [40, 45, 50, 55, 59, 64];
@@ -968,37 +831,33 @@ class VibetarEngine {
     for (let i = 0; i < this.voices.length; i++) {
       const v = this.voices[i];
       const s = i % 6, isPair = i >= 6;
-      v.openF = midiHz(open[s]);
-      v.ratio = isPair ? Math.pow(2, pr.pair[s] / 12) : 1;
+      // the open frequency includes the octave or unison offset of a 12-string's second string
+      v.pitchMul = isPair ? Math.pow(2, pr.pair[s] / 12) : 1;
+      v.openF = midiHz(open[s]) * v.pitchMul;
+      v.ratio = 1;
       v.gain = isPair ? pr.pairGain[s] : pr.gain[s];
-      if (this.mode === 'pluck') {
-        v.openF *= v.ratio;
-        v.ratio = 1; // open frequency already includes the offset
-        v.pitchMul = isPair ? Math.pow(2, pr.pair[s] / 12) : 1;
-        v.b1 = isPair ? pr.pairB1[s] : pr.b1[s];
-        v.b3 = isPair ? pr.pairB3[s] : pr.b3[s];
-        v.apN = isPair ? 0 : pr.apN[s];
-        v.apC0 = isPair ? 0 : pr.apC[s];
-        v.mixH = pr.mixH;
-        const cents = pr.polCents * (0.7 + 0.6 * ((s * 7 + (isPair ? 3 : 0)) % 5) / 4) * (s % 2 ? -1 : 1);
-        v.polDet = Math.pow(2, cents / 1200);
-        v.alpha = this.alpha;
-        v.wound = !isPair && s < (pr.wound || 0);
-        v.sIdx = s; v.zone = s >> 1;
-        // longitudinal resonance that colours the finger noise
-        const w0 = (TAU * (1500 + 330 * s)) / fs, al = Math.sin(w0) / 5;
-        v.sqB0 = al / (1 + al); v.sqA1 = (-2 * Math.cos(w0)) / (1 + al); v.sqA2 = (1 - al) / (1 + al);
-      }
+      v.b1 = isPair ? pr.pairB1[s] : pr.b1[s];
+      v.b3 = isPair ? pr.pairB3[s] : pr.b3[s];
+      v.apN = isPair ? 0 : pr.apN[s];
+      v.apC0 = isPair ? 0 : pr.apC[s];
+      v.mixH = pr.mixH;
+      const cents = pr.polCents * (0.7 + 0.6 * ((s * 7 + (isPair ? 3 : 0)) % 5) / 4) * (s % 2 ? -1 : 1);
+      v.polDet = Math.pow(2, cents / 1200);
+      v.alpha = this.alpha;
+      v.wound = !isPair && s < (pr.wound || 0);
+      v.sIdx = s; v.zone = s >> 1;
+      // longitudinal resonance that colours the finger noise
+      const w0 = (TAU * (1500 + 330 * s)) / fs, al = Math.sin(w0) / 5;
+      v.sqB0 = al / (1 + al); v.sqA1 = (-2 * Math.cos(w0)) / (1 + al); v.sqA2 = (1 - al) / (1 + al);
     }
     // tie the strings to the modelled body's bridge, if there is one
-    const bridged = this.mode === 'pluck' && !!this.bridgeData;
+    const bridged = !!this.bridgeData;
     if (bridged) {
       if (!this.bridge) this.bridge = new Bridge(fs);
       this.bridge.configure(this.bridgeData, this.voices, this.coupling, this.tune);
     } else this.bridge = null;
     for (let i = 0; i < this.voices.length; i++) {
       const v = this.voices[i];
-      if (this.mode !== 'pluck') continue;
       v.bridge = this.bridge; v.loopV = i; v.loopH = this.voices.length + i;
       v.tied = pr.tied ? pr.tied[i % 6] : 1;
       // with less coupling the string keeps more of the loss a rigid bridge would have given it
@@ -1016,7 +875,7 @@ class VibetarEngine {
     if (ev.t != null) {
       ev.frame = Math.round(ev.t * this.fs);
       // a note's time is when the string is let go: the stroke starts earlier
-      if (ev.type === 'n' && this.mode === 'pluck') ev.frame = Math.max(0, ev.frame - this.voices[ev.s].strokeFrames(ev, this.P));
+      if (ev.type === 'n') ev.frame = Math.max(0, ev.frame - this.voices[ev.s].strokeFrames(ev, this.P));
     } else if (ev.frame == null) ev.frame = 0;
     let i = q.length;
     while (i > 0 && q[i - 1].frame > ev.frame) i--;
@@ -1028,9 +887,7 @@ class VibetarEngine {
     switch (ev.type) {
       case 'n': {
         // the stroke must be over when the string's next stroke begins
-        if (this.mode === 'pluck') {
-          for (const nx of this.queue) if (nx.type === 'n' && nx.s === ev.s && nx.vi == null) { ev.lim = Math.max(4, nx.frame - frame - 2); break; }
-        }
+        for (const nx of this.queue) if (nx.type === 'n' && nx.s === ev.s && nx.vi == null) { ev.lim = Math.max(4, nx.frame - frame - 2); break; }
         if (this.pairs && ev.vi == null) {
           const first = ev.d < 0 ? ev.s : ev.s + 6;
           const second = ev.d < 0 ? ev.s + 6 : ev.s;
@@ -1046,7 +903,7 @@ class VibetarEngine {
         if (this.pairs) vs[ev.s + 6].mute(false);
         break;
       case 'q': // a finger travels along string s
-        if (this.mode === 'pluck') vs[ev.s].shift(ev.dur, ev.amt, this.P);
+        vs[ev.s].shift(ev.dur, ev.amt, this.P);
         break;
       case 'O':
         for (const v of vs) v.mute(true);
@@ -1081,41 +938,30 @@ class VibetarEngine {
       while (q.length && q[0].frame <= frame0 + i) this.handle(q.shift(), frame0 + i);
       let end = n;
       if (q.length) { const e = q[0].frame - frame0; if (e < end) end = e; }
-      if (this.mode === 'bow') {
-        for (; i < end; i++) {
-          let o = 0;
-          for (let k = 0; k < nv; k++) o += vs[k].tick();
-          const y = o - dx[0] + R * dy[0];
-          dx[0] = o; dy[0] = y;
-          o0[i] = y * 0.5;
-          if (multi) for (let c = 1; c < 6; c++) out[c][i] = 0;
+      const alpha = this.alpha, g = this.outGain, br = this.bridge;
+      for (; i < end; i++) {
+        let vj = 0, vb = null;
+        if (br) {
+          const u = br.u;
+          for (let k = 0; k < nv; k++) { u[k] = vs[k].tickRead(); u[nv + k] = vs[k].uH; }
+          vb = br.step();
+        } else {
+          let sum = 0;
+          for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
+          vj = sum * alpha;
         }
-      } else {
-        const alpha = this.alpha, g = this.outGain, br = this.bridge;
-        for (; i < end; i++) {
-          let vj = 0, vb = null;
-          if (br) {
-            const u = br.u;
-            for (let k = 0; k < nv; k++) { u[k] = vs[k].tickRead(); u[nv + k] = vs[k].uH; }
-            vb = br.step();
-          } else {
-            let sum = 0;
-            for (let k = 0; k < nv; k++) sum += vs[k].tickRead();
-            vj = sum * alpha;
-          }
-          acc[0] = acc[1] = acc[2] = acc[3] = acc[4] = acc[5] = 0;
-          for (let k = 0; k < nv; k++) {
-            const v = vs[k], x = vb ? v.tickWrite(vb[k], vb[nv + k]) : v.tickWrite(vj);
-            acc[v.zone] += x; acc[3 + v.zone] += v.outH;
-          }
-          let mono = 0;
-          for (let c = 0; c < 6; c++) {
-            const y = acc[c] - dx[c] + R * dy[c];
-            dx[c] = acc[c]; dy[c] = y;
-            if (multi) out[c][i] = y * g; else mono += c < 3 ? y : mixH * y;
-          }
-          if (!multi) o0[i] = mono * g;
+        acc[0] = acc[1] = acc[2] = acc[3] = acc[4] = acc[5] = 0;
+        for (let k = 0; k < nv; k++) {
+          const v = vs[k], x = vb ? v.tickWrite(vb[k], vb[nv + k]) : v.tickWrite(vj);
+          acc[v.zone] += x; acc[3 + v.zone] += v.outH;
         }
+        let mono = 0;
+        for (let c = 0; c < 6; c++) {
+          const y = acc[c] - dx[c] + R * dy[c];
+          dx[c] = acc[c]; dy[c] = y;
+          if (multi) out[c][i] = y * g; else mono += c < 3 ? y : mixH * y;
+        }
+        if (!multi) o0[i] = mono * g;
       }
     }
   }
