@@ -56,6 +56,35 @@ test('palm-muted notes stay in tune', () => {
   assert.ok(Math.abs(1200 * Math.log2(p.f / f)) < 12, `${p.f} vs ${f}`);
 });
 
+test('a dead note is a hard, bright click, about as loud as a note at its start', () => {
+  for (const s of [1, 3, 4]) {
+    const x = note(s, 5, { k: 'x' }), n = note(s, 5);
+    const below = db(rms(n, 0.01, 0.05)) - db(rms(x, 0.01, 0.05));
+    assert.ok(below < 4, `string ${s}: ${below.toFixed(1)} dB below a note in its first 40 ms`);
+    assert.ok(centroid(x, 0.01, 0.05) > 1.15 * centroid(n, 0.01, 0.05), `string ${s}: centroid ${centroid(x, 0.01, 0.05).toFixed(0)} Hz, a note ${centroid(n, 0.01, 0.05).toFixed(0)} Hz`);
+    assert.ok(db(rms(x, 0.15, 0.25)) < db(rms(x, 0.01, 0.05)) - 30, `string ${s}: still ringing`);
+  }
+});
+
+test('vibrato moves the pitch four to five times a second', () => {
+  const e = engine();
+  e.post({ type: 'n', t: 0.01, s: 4, f: midiHz(OPEN[4] + 5), v: 0.8, k: 'v', fr: true, d: 1 });
+  const out = new Float32Array(128), f = [];
+  for (let i = 0; i < 4 * FS; i += 128) { e.render(out, 128, i); if (i > 0.8 * FS) f.push(e.voices[4].curFreq); }
+  const mean = f.reduce((a, b) => a + b) / f.length;
+  let ups = 0;
+  for (let i = 1; i < f.length; i++) if (f[i - 1] < mean && f[i] >= mean) ups++;
+  const rate = ups / ((f.length * 128) / FS);
+  assert.ok(rate > 3.9 && rate < 4.6, `${rate.toFixed(2)} Hz`);
+});
+
+test('a natural harmonic is nearly as loud as the open string', () => {
+  for (const [s, fret] of [[3, 12], [5, 12], [1, 7]]) {
+    const rel = db(rms(note(s, 0, { k: '*', hb: Math.pow(2, -fret / 12) }), 0.1, 0.6)) - db(rms(note(s, 0), 0.1, 0.6));
+    assert.ok(rel > -3 && rel < 1.5, `string ${s} fret ${fret}: ${rel.toFixed(1)} dB against the open string`);
+  }
+});
+
 test('dead notes are a short thud', () => {
   const x = note(1, 5, { k: 'x' });
   assert.ok(peak(x, 0, 0.05) > 0.02);

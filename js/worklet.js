@@ -244,6 +244,11 @@ const PLUCKERS = [
   { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.18, edge: 2.5, holdMs: 4, thetaDeg: 50, noise: 0.012, pos: 1.0, gain: 1 },
   { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
 ];
+const HARMONIC = 1.75; // a harmonic is plucked harder than a note: most of the stroke goes into partials the finger stops
+const DEAD_HIT = 3;  // a dead note is struck hard: it is a chop, heard for its click
+const DEAD_SCRAPE = 0.3; // and the plucker scrapes over a string that cannot give way: roughness of that contact
+const DEAD_K = 0.85;   // how much of a wave passes each place where the fretting hand lies on the string
+const VIBRATO = 4.4;   // times a second
 const HAMMER = 1.12;   // strength of a hammer-on blow, against a pluck at the same velocity
 const PULL_OFF = 0.94; // and of the flick of a pull-off
 const PUSH = 0.1;    // how quickly the hand corrects its speed to have the force ready on time
@@ -372,7 +377,7 @@ class PluckVoice {
     this.pkRelFrames = rel(pl.relMs * (pl.edge ? 1 + this.dia / pl.edge : 1));
     this.pkNail = pl.nail ? { at: pl.nail.at, rel: rel(pl.nail.relMs), click: pl.nail.click } : null;
     // thinner / shorter strings carry less energy
-    this.pkDmax = vel * pl.gain * (harm ? 1.4 : 1) * (ev.rs ? 1.35 : 1) * clamp(Math.pow(f / 260, -0.38), 0.55, 1.4);
+    this.pkDmax = vel * pl.gain * (harm ? HARMONIC : ev.k === 'x' ? DEAD_HIT : 1) * (ev.rs ? 1.35 : 1) * clamp(Math.pow(f / 260, -0.38), 0.55, 1.4);
     // finger path: accelerate, then travel at vF so the static force reaches dMax at the release time
     const Kst = 1 / (N * beta * (1 - beta));
     this.pkAcc = Math.max(1, 0.4 * hold); this.pkHold = hold; this.pkLast = 0; this.pkPush = 1; this.pkOn = Math.max(2, 0.0003 * fs);
@@ -382,7 +387,7 @@ class PluckVoice {
     const dir = ev.d < 0 ? -1 : 1;
     this.pkUv = Math.cos(th) * dir; this.pkUh = Math.sin(th) * dir;
     this.excV = Math.abs(this.pkUv); this.excH = Math.abs(this.pkUh);
-    this.pkNoise = pl.noise * (this.wound ? 2 : 1);
+    this.pkNoise = ev.k === 'x' ? DEAD_SCRAPE : pl.noise * (this.wound ? 2 : 1);
     this.pkXf = 0; this.pkY = 0; this.pkN = 0; this.pkRel = false; this.pkClick = 0;
     this.contact = 1; this.contactFrames = 0;
   }
@@ -664,7 +669,7 @@ class PluckVoice {
     if (ev.fr) { b1 *= 1.35; b3 *= 1.2; }
     if (ev.br) { b1 *= 1.25; b3 *= 1.9; } // the flat side of a finger presses softer than a fingertip
     if (pm) b3 *= 1.6;
-    else if (dead) { b1 = b1 * 2 + 6; b3 *= 3; }
+    else if (dead) b1 = b1 * 2 + 6; // the hand on the string takes the highs with everything else: no extra loss for them
     this.setDamping(f, b1, b3);
     this.setStiffness(f);
     const N = this.fs / f;
@@ -683,7 +688,7 @@ class PluckVoice {
       // what is resting on the string while it is plucked
       if (harm) this.touch([ev.hb], N, 0.5, 0, clamp(10 * N / this.fs, 0.025, 0.085)); // fingertip on the node, then lifted
       else if (pm) this.touch(PALM.map((x) => x * f / this.openF), N, PALM_K, 0, 0); // edge of the palm at the bridge
-      else if (dead) this.touch(DEAD, N, 0.5, 0, 0);                  // fretting hand lying on the string
+      else if (dead) this.touch(DEAD, N, DEAD_K, 0, 0);               // fretting hand lying on the string
       else this.release(0);
     } else {
       const fromF = this.curFreq, from = 12 * Math.log2(fromF / f);
@@ -756,7 +761,7 @@ class PluckVoice {
     }
     if (this.vibDepth !== 0) {
       const tt = t - this.vibT0;
-      if (tt > 0) semis += this.vibDepth * Math.min(1, tt / 0.3) * 0.5 * (1 - Math.cos(TAU * 5.3 * tt));
+      if (tt > 0) semis += this.vibDepth * Math.min(1, tt / 0.3) * 0.5 * (1 - Math.cos(TAU * VIBRATO * tt));
       active = true;
     }
     const rise = this.tension() > 6e-6 ? this.tmRise : 0;
