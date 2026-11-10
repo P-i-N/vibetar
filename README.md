@@ -13,6 +13,8 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Palm-muted passages, marked with a `P.M.` bracket above the staff
 - Natural harmonics, written `<12>`
 - A fretting hand read from the tab: it holds notes down while it can, barres chords, moves along the neck when it must, and mutes the string before in single-note lines; its fingers squeak where hands do — on shifts, at section starts, after pauses
+- A fretboard under the tab that shows this hand: its position, the finger on each note, barres, open strings, harmonics and the strings that sound
+- **Humanize** (the switch next to the tempo, the amount in the Player panel): timing and loudness drift, phrases breathe, the song slows into its last note, the melody is brought out, no string is exactly in tune. Off: the tab is played exactly as written
 - A body computed from wood, bracing and air, heard through two virtual microphones
 - Three instruments: steel-string, nylon and 12-string
 - Five picking techniques: pick, bare fingers, short nails, long nails, hybrid

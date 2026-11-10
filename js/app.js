@@ -4,6 +4,7 @@ import { AudioEngine, renderSong, wavBlob } from './audio.js';
 import * as S from './song.js';
 import { parseMidi, midiToSong } from './midi.js';
 import { DEMOS } from './demos.js';
+import { createNeck } from './neck.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -14,6 +15,7 @@ const el = (tag, cls, text) => {
 };
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const STORE_KEY = 'vibetar.song';
+const NECK_KEY = 'vibetar.neck';
 // small marks next to a note; palm mutes and harmonics are drawn in their own way
 const TECH_SYM = { h: 'h', s: '/', b: 'b', v: '~', '>': '>' };
 
@@ -98,7 +100,27 @@ function restore(from, to) {
 }
 
 // the fretting hand plans the song once per performance; an edit while playing makes it plan again
-function replan() { if (player.perf) player.perf.hand = null; }
+function replan() {
+  handCache = null;
+  if (player.perf) { player.perf.hand = null; player.perf.end = null; }
+}
+
+// ---- fretboard ---------------------------------------------------------------
+
+const neck = createNeck($('neckCanvas'));
+let handCache = null;
+// the fretting hand's plan for the song as it is now
+const handOf = () => handCache || (handCache = S.planSong(song));
+// while nothing plays, the fretboard shows the column under the cursor
+function showOnNeck() {
+  if (!player.playing) neck.show(song.cols[cur.step], handOf()[cur.step]);
+}
+function setNeck(on) {
+  $('neck').hidden = !on;
+  $('neckToggle').textContent = on ? 'Hide fretboard' : 'Show fretboard';
+  try { localStorage.setItem(NECK_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
+  if (on) { neck.resize(); showOnNeck(); }
+}
 
 // ---- sheet rendering ---------------------------------------------------------
 
@@ -209,6 +231,7 @@ function paintCursor() {
   }
   const e = cellEls[cur.step * 6 + cur.s];
   if (e) { e.classList.add('cur'); marked.push(e); }
+  showOnNeck();
 }
 
 function clampCursor() {
@@ -242,6 +265,7 @@ function updateStatus() {
 
 function changed(a, b) {
   replan();
+  neck.setSong(song);
   if (a == null) renderSheet(); else paintSteps(a, b);
   updateStatus();
   scheduleSave();
@@ -369,8 +393,7 @@ async function preview(s, cell) {
   if (!cell || cell.f === '.' || player.playing) return;
   await ready();
   const t = audio.time + 0.02;
-  const evs = [S.cellEvent(song, s, { f: cell.f, t: (cell.t || '').replace(/[hs]/g, '') }, t, 0.8, 1)];
-  audio.send(evs);
+  audio.send([S.previewEvent(song, s, { f: cell.f, t: (cell.t || '').replace(/[hs]/g, '') }, t)]);
 }
 
 // ---- transport ---------------------------------------------------------------
@@ -403,7 +426,8 @@ async function play(fromTop) {
   const bar = S.stepsPerBar(song);
   let start = fromTop ? 0 : Math.floor(cur.step / bar) * bar;
   if (start < from || start >= to) start = from;
-  Object.assign(player, { playing: true, step: start, from, to, nextTime: audio.time + 0.08, queue: [], ended: false, endTime: Infinity, perf: S.newPerformer() });
+  Object.assign(player, { playing: true, step: start, from, to, nextTime: audio.time + 0.08, queue: [], ended: false, endTime: Infinity, perf: Object.assign(S.newPerformer(), { loop: player.loop }) });
+  neck.show(null, null);
   $('play').classList.add('on'); $('playIco').textContent = '■'; $('playLbl').textContent = 'Stop';
   schedule();
   player.timer = setInterval(schedule, 25);
@@ -436,6 +460,7 @@ function stop(silent) {
   player.playing = false; player.queue = [];
   $('play').classList.remove('on'); $('playIco').textContent = '▶'; $('playLbl').textContent = 'Play';
   setPlayCol(-1);
+  showOnNeck();
   if (!silent) audio.hush();
   else audio.graph && audio.graph.node.port.postMessage({ type: 'flush' });
 }
@@ -460,11 +485,14 @@ function setPlayCol(step) {
 let meterLevel = 0;
 function frame() {
   requestAnimationFrame(frame);
-  if (!audio.running) return;
-  if (player.playing) {
+  const clock = performance.now() / 1000;
+  if (audio.running && player.playing) {
     const now = audio.time - audio.latency;
     let step = -2;
-    while (player.queue.length && player.queue[0].t <= now) step = player.queue.shift().step;
+    while (player.queue.length && player.queue[0].t <= now) {
+      step = player.queue.shift().step;
+      neck.strike(song.cols[step], handOf()[step], clock);
+    }
     if (step !== -2) setPlayCol(step);
     if (player.ended && audio.time >= player.endTime) {
       // let the last notes ring out
@@ -474,6 +502,8 @@ function frame() {
       setPlayCol(-1);
     }
   }
+  if (!$('neck').hidden) neck.draw(clock);
+  if (!audio.running) return;
   const cv = $('meter');
   if (cv.offsetParent) {
     const lv = audio.level();
@@ -492,6 +522,7 @@ function frame() {
 const pct = (v) => Math.round(v * 100) + '%';
 const signed = (v) => (v > 0 ? '+' : '') + Math.round(v * 100);
 const sliders = [];
+let humanRow = null;
 
 function mkSlider(parent, get, set, label, min, max, step, fmt, showFor) {
   const row = el('label', 'slider');
@@ -512,7 +543,7 @@ function mkSlider(parent, get, set, label, min, max, step, fmt, showFor) {
   if (typeof label === 'function') name.textContent = label(song.inst.preset);
   input.addEventListener('input', () => { set(parseFloat(input.value)); refresh(); scheduleSave(); });
   sliders.push(refresh);
-  return refresh;
+  return row;
 }
 
 let fxTimer = 0;
@@ -522,7 +553,7 @@ function fxChanged(slow) {
 }
 
 function buildSettings() {
-  const I = $('instSliders');
+  const I = $('instSliders'), P = $('playerSliders');
   const inst = (k) => [() => song.inst[k], (v) => { song.inst[k] = v; audio.syncInstrument(); }];
   mkSlider(I, ...inst('pickPos'), 'Pick position', 0.06, 0.4, 0.005, pct);
   mkSlider(I, ...inst('pickHard'), 'Attack', 0, 1, 0.01, pct);
@@ -530,9 +561,14 @@ function buildSettings() {
   mkSlider(I, ...inst('sustain'), 'Sustain', -1, 1, 0.02, signed);
   mkSlider(I, ...inst('body'), 'Body', 0, 1, 0.01, pct);
   mkSlider(I, ...inst('coupling'), 'String coupling', 0, 1, 0.01, pct);
-  mkSlider(I, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct);
-  mkSlider(I, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms');
-  mkSlider(I, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
+  mkSlider(P, ...inst('strum'), 'Strum spread', 0, 45, 1, (v) => v + ' ms');
+  mkSlider(P, ...inst('fingerNoise'), 'Finger noise', 0, 1, 0.01, pct);
+  humanRow = mkSlider(P, ...inst('human'), 'Humanize', 0, 1, 0.01, pct);
+  $('humanOn').addEventListener('change', (e) => {
+    song.inst.humanOn = e.target.checked ? 1 : 0;
+    e.target.blur();
+    syncInstControls(); scheduleSave();
+  });
 
   const fx = (k, slow) => [() => song.fx[k], (v) => { song.fx[k] = v; syncFxControls(); fxChanged(slow); }];
   for (const [k, r] of Object.entries(S.REVERBS)) $('revSpace').append(new Option(r.name, k));
@@ -567,7 +603,8 @@ function buildSettings() {
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b || b.dataset.preset === song.inst.preset) return;
-    song.inst = { ...S.INSTRUMENTS[b.dataset.preset] };
+    // the player stays the same on another instrument
+    song.inst = { ...S.INSTRUMENTS[b.dataset.preset], human: song.inst.human, humanOn: song.inst.humanOn };
     syncInstControls(); audio.syncInstrument(); scheduleSave();
   });
 
@@ -578,9 +615,9 @@ function buildSettings() {
   $('tuning').addEventListener('change', (e) => {
     const t = S.TUNINGS[e.target.value];
     if (!t) return;
-    song.tuning = [...t]; renderSheet(); audio.syncInstrument(); scheduleSave();
+    song.tuning = [...t]; changed(); audio.syncInstrument();
   });
-  $('capo').addEventListener('change', (e) => { song.capo = +e.target.value; renderSheet(); audio.syncInstrument(); scheduleSave(); });
+  $('capo').addEventListener('change', (e) => { song.capo = +e.target.value; changed(); audio.syncInstrument(); });
   const regrid = () => {
     pushUndo();
     S.reshape(song, +$('spb').value, +$('bpb').value);
@@ -599,6 +636,8 @@ function buildSettings() {
 function syncInstControls() {
   for (const b of $('presets').children) b.classList.toggle('on', b.dataset.preset === song.inst.preset);
   for (const b of $('picking').children) b.classList.toggle('on', +b.dataset.v === (song.inst.picking || 0));
+  $('humanOn').checked = song.inst.humanOn !== 0;
+  humanRow.classList.toggle('off', song.inst.humanOn === 0);
   for (const r of sliders) r();
 }
 function syncFxControls() {
@@ -623,6 +662,8 @@ function setSong(s) {
   song = s;
   cur = { step: 0, s: 5 }; anchor = null;
   undoStack.length = 0; redoStack.length = 0;
+  handCache = null;
+  neck.setSong(song);
   syncSongControls(); syncInstControls(); syncFxControls();
   renderSheet();
   audio.setSong(song);
@@ -682,6 +723,7 @@ function handleKey(key, e) {
 
 function toggleLoop() {
   player.loop = !player.loop;
+  if (player.perf) player.perf.loop = player.loop;
   $('loop').setAttribute('aria-pressed', player.loop);
 }
 
@@ -731,7 +773,7 @@ function bindInput() {
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (b) b.blur();
-    if (!e.target.closest('.menuwrap')) closeMenu();
+    if (!e.target.closest('.menuwrap')) closeMenus();
   });
 
   $('play').addEventListener('click', () => (player.playing ? stop() : play(false)));
@@ -742,23 +784,35 @@ function bindInput() {
     if (b) barOp(b.dataset.act);
   });
 
-  // menu
-  $('menuBtn').addEventListener('click', () => {
-    const m = $('menu');
-    m.hidden = !m.hidden;
-    $('menuBtn').setAttribute('aria-expanded', !m.hidden);
-  });
+  // menus
+  for (const [btn, menu] of MENUS) {
+    $(btn).addEventListener('click', () => {
+      const open = $(menu).hidden;
+      closeMenus();
+      $(menu).hidden = !open;
+      $(btn).setAttribute('aria-expanded', open);
+    });
+  }
   DEMOS.forEach((d, i) => {
-    const b = el('button', '', d.name);
+    const b = el('button');
     b.dataset.demo = i;
-    $('demoList').append(b);
+    b.append(el('b', '', d.name), el('small', '', d.about));
+    $('demoMenu').append(b);
+  });
+  // a demo is chosen to be heard: it starts at once
+  $('demoMenu').addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    closeMenus();
+    await save(); setSong(DEMOS[+b.dataset.demo].make()); await save(true);
+    play(true);
   });
   $('menu').addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    closeMenu();
-    if (b.dataset.demo != null) { await save(); setSong(DEMOS[+b.dataset.demo].make()); await save(true); }
-    else if (b.dataset.act === 'new') { await save(); setSong(S.newSong()); await save(true); toast('New song — the browser Back button brings the old one back'); }
+    closeMenus();
+    if (b.dataset.act === 'new') { await save(); setSong(S.newSong()); await save(true); toast('New song — the browser Back button brings the old one back'); }
+    else if (b.dataset.act === 'neck') setNeck($('neck').hidden);
     else if (b.dataset.act === 'help') $('help').showModal();
     else if (b.dataset.act === 'wav') exportWav();
     else if (b.dataset.act === 'midi') { midiMode = b.dataset.mode; $('midiFile').click(); }
@@ -780,14 +834,14 @@ function bindInput() {
   let rt = 0;
   window.addEventListener('resize', () => {
     clearTimeout(rt);
-    rt = setTimeout(() => { if (calcPerRow() !== perRow) renderSheet(); }, 120);
+    rt = setTimeout(() => { if (calcPerRow() !== perRow) renderSheet(); neck.resize(); }, 120);
   });
   document.addEventListener('visibilitychange', () => { if (player.playing) schedule(); });
 }
 
-function closeMenu() {
-  $('menu').hidden = true;
-  $('menuBtn').setAttribute('aria-expanded', 'false');
+const MENUS = [['menuBtn', 'menu'], ['demoBtn', 'demoMenu']];
+function closeMenus() {
+  for (const [btn, menu] of MENUS) { $(menu).hidden = true; $(btn).setAttribute('aria-expanded', 'false'); }
 }
 
 // 'standard': EADGBE without a capo; 'current': this song's tuning and capo
@@ -830,6 +884,9 @@ async function boot() {
   audio.onNotice = (msg) => toast(msg, 5000);
   buildSettings();
   bindInput();
+  let neckOn = true;
+  try { neckOn = localStorage.getItem(NECK_KEY) !== '0'; } catch (e) { /* private mode */ }
+  setNeck(neckOn);
   let ok = await loadFromHash();
   if (!ok) {
     try {
@@ -837,7 +894,7 @@ async function boot() {
       if (saved) { setSong(await S.decodeSong(saved)); ok = true; }
     } catch (e) { /* ignore */ }
   }
-  if (!ok) setSong(DEMOS[0].make());
+  if (!ok) { setSong(DEMOS[0].make()); toast('Press Play to hear the demo — there are more under Demos', 5000); }
   requestAnimationFrame(frame);
   // debugging / scripting hook
   window.vibetar = { audio, get song() { return song; }, S, player };
