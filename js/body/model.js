@@ -6,10 +6,11 @@ import { coupleBody, plateConductance } from './couple.js';
 import { micTransfer } from './radiate.js';
 import { fft, denseField, bodyTarget } from '../ir.js';
 
-export const MODEL_VERSION = 3;
+export const MODEL_VERSION = 4;
 export const BRIDGE_MODES = 24;      // resonances that also run inside the string engine
 const LENGTH = 0.42;                 // seconds of impulse response
 const XFADE = [3000, 5000];          // modelled range fades out, statistical field fades in
+const MATCH = [2000, 3500];          // where the statistical field takes its level from the model
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -57,17 +58,31 @@ export function buildBody(name, fs) {
     wM[b] = Math.cos((Math.PI / 2) * u); wD[b] = Math.sin((Math.PI / 2) * u);
   }
   const target = bodyTarget(name);
-  const irs = [];
+  const fields = [];
   for (let d = 0; d < drives.length; d++) {
     const field = denseField(fs, len, target, 7919 * (d + 1) + name.length, 2000);
     for (let m = 0; m < 2; m++) {
-      const spec = spectra[m][d];
       const re = new Float64Array(nfft), im = new Float64Array(nfft);
-      const shift = Math.round(spec.delay * fs), src = m ? field.R : field.L;
+      const shift = Math.round(spectra[m][d].delay * fs), src = m ? field.R : field.L;
       for (let i = 0; i + shift < len; i++) re[i + shift] = src[i];
       fft(re, im);
-      const dense = { re, im };
-      const gain = Math.sqrt(power(spec, 2500, 3500) / power(dense, 2500, 3500));
+      fields.push({ re, im });
+    }
+  }
+  // Up there the top answers a force alike wherever on the bridge it acts: one level for the
+  // three parts of the bridge and both microphones, another for rocking. Matching each
+  // response on its own would copy the few resonances near the top of the modelled range.
+  const level = (ds) => {
+    let pm = 0, pd = 0;
+    for (const d of ds) for (let m = 0; m < 2; m++) { pm += power(spectra[m][d], MATCH[0], MATCH[1]); pd += power(fields[2 * d + m], MATCH[0], MATCH[1]); }
+    return Math.sqrt(pm / pd);
+  };
+  const gains = [level([0, 1, 2]), level([3, 4, 5])];
+  const irs = [];
+  for (let d = 0; d < drives.length; d++) {
+    for (let m = 0; m < 2; m++) {
+      const spec = spectra[m][d], dense = fields[2 * d + m], { re, im } = dense;
+      const gain = gains[d < 3 ? 0 : 1];
       for (let b = 0; b <= half; b++) {
         re[b] = spec.re[b] * wM[b] + gain * wD[b] * dense.re[b];
         im[b] = spec.im[b] * wM[b] + gain * wD[b] * dense.im[b];

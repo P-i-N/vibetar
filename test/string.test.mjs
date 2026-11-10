@@ -109,3 +109,41 @@ test('the longitudinal pull stays well below the note, as designed per string', 
     assert.ok(Math.abs(rel - want) < 3, `string ${s}: longitudinal ${rel.toFixed(1)} dB re the towards-top output, designed ${want}`);
   }
 });
+
+// decay rate (1/s) of the partial near f between t and t + dt
+function decayRate(x, f, t = 0.05, dt = 0.2) {
+  const a = freqNear(x, f, t), b = freqNear(x, a.f, t + dt, 0.1, 0.003);
+  return Math.log(a.mag / b.mag) / dt;
+}
+
+test('plain steel strings keep their highs: the loss stops growing with the square of the frequency', () => {
+  const pr = PRESETS.steel;
+  for (const s of [4, 5]) {
+    // the towards-top motion alone: the two directions of motion beat against each other
+    const f0 = midiHz(OPEN[s]), x = without('tm', () => channels(s, 0.8, 0.5)[s >> 1]);
+    // a rigid bridge: 1.45 x the string's broadband loss (see setDamping)
+    const law = (f) => 1.45 * pr.b1[s] + (pr.b3[s] * f * f) / (1 + (f / pr.flat[s]) ** 2);
+    for (const k of [6, 26]) {
+      const f = k * f0 * Math.sqrt((1 + pr.B[s] * k * k) / (1 + pr.B[s]));
+      const rate = decayRate(x, f), want = law(f);
+      assert.ok(rate > 0.6 * want && rate < 1.35 * want, `string ${s} partial ${k} (${f.toFixed(0)} Hz): ${rate.toFixed(1)} /s, law ${want.toFixed(1)} /s`);
+    }
+  }
+  // the wound strings follow the square law
+  assert.ok(pr.flat.slice(0, 4).every((fc) => !fc));
+});
+
+test('tuning a note takes little from its highs: nearby pitches keep them equally long', () => {
+  // the loop length of each of these pitches ends on another fraction of a sample
+  const rates = [];
+  for (let i = 0; i < 8; i++) {
+    const f0 = midiHz(OPEN[5] + 12) * (1 + 0.0017 * i);
+    const e = engine({ fingerNoise: 0 });
+    e.post({ type: 'n', t: 0.01, s: 5, f: f0, v: 0.8, k: '', fr: true, d: 1 });
+    const n = Math.floor((0.4 * FS) / 128) * 128, ch = [0, 1, 2, 3, 4, 5].map(() => new Float32Array(n));
+    for (let j = 0; j < n; j += 128) e.render(ch.map((c) => c.subarray(j, j + 128)), 128, j);
+    rates.push(decayRate(ch[2], 12 * f0 * 1.005, 0.04, 0.15));
+  }
+  const lo = Math.min(...rates), hi = Math.max(...rates);
+  assert.ok(hi / lo < 1.6, `partial 12 (8 kHz) of notes around E5 decays at ${lo.toFixed(1)} to ${hi.toFixed(1)} /s`);
+});

@@ -4,7 +4,7 @@
 //   * two transverse polarisations per string (slightly detuned, different
 //     decay rates) -> beating and the two-stage decay of a real string
 //   * frequency dependent damping fitted to a physical loss model
-//     sigma(f) = b1 + b3 f^2 for every note
+//     sigma(f) = b1 + b3 f^2 / (1 + (f / flat)^2) for every note
 //   * stiffness dispersion (allpass cascade) on the wound strings
 //   * an ideal-pluck excitation: a band-limited rectangular velocity pulse
 //     whose length is set by the picking position and whose edges are set by
@@ -34,36 +34,64 @@ function mulberry32(a) {
 
 // ---- filter helpers -------------------------------------------------------
 
-// one-pole lowpass  H(z) = (1-a) / (1 - a z^-1)
-function lpMag(a, w) { return (1 - a) / Math.sqrt(1 - 2 * a * Math.cos(w) + a * a); }
-function lpDelay(a, w) { return Math.atan2(a * Math.sin(w), 1 - a * Math.cos(w)) / w; }
+// The loss filter: a first-order shelf  H(z) = (1-m) + m (1-a) / (1 - a z^-1).
+// m = 1 is a one-pole lowpass; a smaller m stops the loss from growing above the corner.
+function shelf(a, m, w) {
+  const c = Math.cos(w), d = 1 - 2 * a * c + a * a;
+  return { re: 1 - m + (m * (1 - a) * (1 - a * c)) / d, im: (-m * (1 - a) * a * Math.sin(w)) / d };
+}
+function lpMag(a, m, w) { const h = shelf(a, m, w); return Math.hypot(h.re, h.im); }
+function lpDelay(a, m, w) { const h = shelf(a, m, w); return -Math.atan2(h.im, h.re) / w; } // phase delay in samples
 // first-order allpass  H(z) = (c + z^-1) / (1 + c z^-1), phase delay in samples
 function apDelay(c, w) {
   const s = Math.sin(w), co = Math.cos(w);
   return -(Math.atan2(-s, c + co) - Math.atan2(-c * s, 1 + c * co)) / w;
 }
 
-// Fit loop gain g and one-pole coefficient a so that a string at f0 decays
-// with rate sigma(f) = b1 + b3 f^2  (amplitude ~ exp(-sigma t)).
-function designDamping(f0, b1, b3, fs) {
+const HOLD = 0.002;
+
+// Weights of a fifth-order Lagrange interpolator for a point x (2 <= x < 3) between six samples.
+function lagrange(h, x) {
+  const x1 = x - 1, x2 = x - 2, x3 = x - 3, x4 = x - 4, x5 = x - 5;
+  const p01 = x * x1, p23 = x2 * x3, p45 = x4 * x5;
+  h[0] = (-x1 * p23 * p45) / 120; h[1] = (x * p23 * p45) / 24;
+  h[2] = (-p01 * x3 * p45) / 12; h[3] = (p01 * x2 * p45) / 12;
+  h[4] = (-p01 * p23 * x5) / 24; h[5] = (p01 * p23 * x4) / 120;
+}
+
+// Fit the loss filter (pole a, depth m) and the loop gain g so that a string at f0 decays
+// with rate sigma(f) = b1 + b3 f^2 / (1 + (f / flat)^2)  (amplitude ~ exp(-sigma t)).
+// flat = 0: the loss grows with the square of the frequency throughout (a one-pole lowpass).
+// Otherwise the pole sits at `flat` and the depth sets the loss. A loss too large for that
+// (a muted string) gets the lowpass.
+function designDamping(f0, b1, b3, fs, flat = 0) {
   const w0 = (TAU * f0) / fs;
   const fh = Math.min(0.42 * fs, Math.max(5 * f0, 3500));
   const wh = (TAU * fh) / fs;
-  const s0 = b1 + b3 * f0 * f0;
-  const sh = b1 + b3 * fh * fh;
+  const sigma = (f) => b1 + (b3 * f * f) / (flat ? 1 + (f / flat) ** 2 : 1);
+  const s0 = sigma(f0), sh = sigma(fh);
   const G0 = Math.exp(-s0 / f0);
   const ratio = Math.exp(-(sh - s0) / f0);
-  let lo = 0, hi = 0.995;
-  for (let i = 0; i < 30; i++) {
-    const mid = 0.5 * (lo + hi);
-    if (lpMag(mid, wh) / lpMag(mid, w0) > ratio) lo = mid; else hi = mid;
+  const drop = (a, m) => lpMag(a, m, wh) / lpMag(a, m, w0);
+  let a = flat ? Math.exp((-TAU * flat) / fs) : 0, m = 1;
+  if (flat && drop(a, 1) < ratio) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 30; i++) {
+      m = 0.5 * (lo + hi);
+      if (drop(a, m) > ratio) lo = m; else hi = m;
+    }
+  } else {
+    let lo = 0, hi = 0.995;
+    for (let i = 0; i < 30; i++) {
+      a = 0.5 * (lo + hi);
+      if (drop(a, 1) > ratio) lo = a; else hi = a;
+    }
   }
-  const a = 0.5 * (lo + hi);
-  return { a, g: Math.min(0.99999, G0 / lpMag(a, w0)) };
+  return { a, m, g: Math.min(0.99999, G0 / lpMag(a, m, w0)) };
 }
 
 // Stiffness: M equal first-order allpass sections in the loop, together with the loss
-// filter (one-pole, coefficient a), delay the low partials more than the high ones. Returns
+// filter (pole a, depth m), delay the low partials more than the high ones. Returns
 // the section coefficient c that puts partials 2..K (up to 5 kHz) closest to
 // f_k = k f sqrt((1 + B k²) / (1 + B)), the fundamental being tuned exactly by the delay line.
 // The loop's phase delay at f_k must be k fs / f_k; each partial's stretch counts relative to
@@ -75,16 +103,16 @@ function sectionsFor(f, B, fs) {
   // first-order sections stretch the high partials too little on the stiffest strings: one more there
   return clamp(Math.ceil((N * (1 - 1 / Math.sqrt(1 + B * K * K))) / 3), B >= 4e-5 ? 2 : 1, MAX_SECTIONS);
 }
-function designDispersion(f, B, M, a, fs) {
+function designDispersion(f, B, M, a, m, fs) {
   const N = fs / f, K = Math.max(2, Math.min(30, Math.floor(5000 / f)));
   const w1 = (TAU * f) / fs;
   const err = (c) => {
-    const at1 = lpDelay(a, w1) + M * apDelay(c, w1);
+    const at1 = lpDelay(a, m, w1) + M * apDelay(c, w1);
     let e = 0;
     for (let k = 2; k <= K; k++) {
       const fk = k * f * Math.sqrt((1 + B * k * k) / (1 + B)), w = (TAU * fk) / fs;
       if (w > 0.9 * Math.PI) break;
-      const need = N - (k * fs) / fk, r = (N + lpDelay(a, w) + M * apDelay(c, w) - at1 - (k * fs) / fk) / need;
+      const need = N - (k * fs) / fk, r = (N + lpDelay(a, m, w) + M * apDelay(c, w) - at1 - (k * fs) / fk) / need;
       e += (r * r) / k;
     }
     return e;
@@ -103,6 +131,12 @@ function designDispersion(f, B, M, a, fs) {
 
 // ---- instrument definitions ----------------------------------------------
 // index 0 = lowest string. b1 [1/s] broadband loss, b3 [s] high-frequency loss.
+//   flat     frequency (Hz) above which the loss stops growing with the square of the frequency
+//            (0: never). A plain steel string loses its energy to the air and to heat flowing
+//            across the bending wire: both grow more slowly than the friction between the
+//            windings of a wound string or inside nylon. Fitted from 2 to 10 kHz to
+//            sigma = (R0 + R1 sqrt(f)) / (2 mu) + pi f (2.0e-4 + 4 pi² mu E I d f² / T²)
+//            (air, thermoelastic and viscoelastic loss of a 0.3 mm steel wire)
 //   B        inharmonicity of the open string: partials at k f sqrt((1 + B k²) / (1 + B)).
 //            B = π³ E d⁴ / (64 T L²) with the diameter d of the string, of the core for a wound one
 //   tm       how far (cents) an mf pluck of the open string starts sharp: the plucked string is
@@ -126,6 +160,7 @@ const PRESETS = {
     phantom: [-24, -29, -32, -38, -31, -38],
     tmE: [70.9, 73.1, 45.3, 26.5, 17.4, 9.87],
     phCal: [12.4, 9.88, 9.04, 12, 23.8, 15.4],
+    flat: [0, 0, 0, 0, 8000, 8000],
     gain: [1.0, 1.0, 0.98, 0.94, 0.9, 0.86],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     // the strings' own loss per string when tied to the modelled bridge, trimmed so that the
@@ -153,6 +188,7 @@ const PRESETS = {
     phantom: [-25, -30, -33, -39, -32, -39],
     tmE: [55.6, 66, 37.7, 31.1, 17.9, 11],
     phCal: [12.6, 12.5, 10.8, 13, 21.4, 18.7],
+    flat: [0, 0, 0, 0, 8000, 8000],
     gain: [0.8, 0.8, 0.78, 0.76, 0.7, 0.66],
     mixH: 0.6, polCents: 0.9, pickNoise: 0.1, wound: 4,
     tied: [1, 1, 1, 0.55, 1.6, 1.15],
@@ -160,6 +196,7 @@ const PRESETS = {
     pair: [12.02, 12.03, 12.02, 12.03, 0.05, -0.05],
     pairB1: [0.85, 0.9, 0.95, 1.05, 0.8, 0.9],
     pairB3: [3.6e-7, 3.4e-7, 3.2e-7, 3.0e-7, 3.4e-7, 3.0e-7],
+    pairFlat: [8000, 8000, 8000, 8000, 8000, 8000],
     pairGain: [0.62, 0.62, 0.6, 0.58, 0.7, 0.66],
     // the thin plain octave strings, and the unison strings like their partners
     pairB: [2e-5, 2e-5, 2e-5, 2e-5, 6.0e-5, 1.9e-5],
@@ -220,8 +257,8 @@ class PluckVoice {
     this.w = 0;
     this.exc = new Float64Array(size);
     this.excLen = 0; this.excPos = 0; this.excV = 0.8; this.excH = 0.6;
-    this.aV = 0.1; this.gV = 0.99; this.lpV = 0;
-    this.aH = 0.1; this.gH = 0.99; this.lpH = 0;
+    this.aV = 0.1; this.mV = 1; this.gV = 0.99; this.lpV = 0;
+    this.aH = 0.1; this.mH = 1; this.gH = 0.99; this.lpH = 0;
     this.apN = 0; this.apC = 0; this.apCache = new Map(); this.B = 0;
     this.axV = new Float64Array(MAX_SECTIONS); this.ayV = new Float64Array(MAX_SECTIONS);
     this.axH = new Float64Array(MAX_SECTIONS); this.ayH = new Float64Array(MAX_SECTIONS);
@@ -229,11 +266,14 @@ class PluckVoice {
     this.tmK = 0; this.tmAge = 0; this.tmRise = 0; this.fL = 12; this.phG = 0;
     this.phN = new Float64Array(3); this.phS = new Float64Array(4);
     this.dV = 100; this.dH = 100; this.dVinc = 0; this.dHinc = 0;
+    // interpolator weights, and the loop lengths they belong to
+    this.hV = new Float64Array(6); this.hH = new Float64Array(6); this.hVd = 0; this.hHd = 0;
+    this.hVn = -1; this.hHn = -1;
     this.tV = 100; this.tH = 100;
     this.dampGain = 1; this.dampCount = 0;
     this.uV = 0; this.uH = 0;
     // material / config
-    this.openF = 110; this.ratio = 1; this.b1 = 0.6; this.b3 = 6e-7;
+    this.openF = 110; this.ratio = 1; this.b1 = 0.6; this.b3 = 6e-7; this.flat = 0;
     this.gain = 1; this.mixH = 0.6; this.polDet = 1.0005;
     // note state
     this.freq = 110; this.curFreq = 110; this.sounding = false;
@@ -472,28 +512,22 @@ class PluckVoice {
   }
 
   setDamping(f, b1, b3) {
-    const fs = this.fs;
-    if (this.bridge) {
-      // the bridge takes what the body takes; only the string's own losses remain here
-      const dv = designDamping(f, b1 * this.ownLoss * this.tied, b3, fs);
-      this.aV = dv.a; this.gV = dv.g;
-      const dh = designDamping(f * this.polDet, b1 * 0.7 * this.tied, b3 * 0.9, fs);
-      this.aH = dh.a; this.gH = dh.g;
-      return;
-    }
-    const dv = designDamping(f, b1 * 1.45, b3, fs);
-    this.aV = dv.a; this.gV = dv.g;
-    const dh = designDamping(f * this.polDet, b1 * 0.7, b3 * 0.9, fs);
-    this.aH = dh.a; this.gH = dh.g;
+    const fs = this.fs, flat = this.flat;
+    // the bridge takes what the body takes; only the string's own losses remain here
+    const own = this.bridge ? this.ownLoss * this.tied : 1.45, along = this.bridge ? 0.7 * this.tied : 0.7;
+    const dv = designDamping(f, b1 * own, b3, fs, flat);
+    this.aV = dv.a; this.mV = dv.m; this.gV = dv.g;
+    const dh = designDamping(f * this.polDet, b1 * along, b3 * 0.9, fs, flat);
+    this.aH = dh.a; this.mH = dh.m; this.gH = dh.g;
   }
 
   // Stiffness and longitudinal resonance of the string stopped for a note at f: both follow
   // the vibrating length. Stiffness grows with the square of the frequency. After setDamping.
   setStiffness(f) {
-    const key = Math.round(f * 64) * 100000 + Math.round(this.aV * 1e5);
+    const key = (Math.round(f * 64) * 100000 + Math.round(this.aV * 1e5)) * 4096 + Math.round(this.mV * 4095);
     let c = this.apCache.get(key);
     if (c == null) {
-      c = this.apN ? designDispersion(f, this.B * (f / this.openF) ** 2, this.apN, this.aV, this.fs) : 0;
+      c = this.apN ? designDispersion(f, this.B * (f / this.openF) ** 2, this.apN, this.aV, this.mV, this.fs) : 0;
       if (this.apCache.size > 512) this.apCache.clear();
       this.apCache.set(key, c);
     }
@@ -528,8 +562,8 @@ class PluckVoice {
     if (this.apN) { apV = this.apN * apDelay(this.apC, w); apH = this.apN * apDelay(this.apC, wH); }
     // the bridge's give shifts the pitch of what it radiates: tune the fundamental for it
     const br = this.bridge;
-    this.tV = Math.max(2.001, fs / f - lpDelay(this.aV, w) - apV - (br ? br.reflectionDelay(this.loopV, f) : 0));
-    this.tH = Math.max(2.001, fs / fH - lpDelay(this.aH, wH) - apH - (br ? br.reflectionDelay(this.loopH, fH) : 0));
+    this.tV = Math.max(3.001, fs / f - lpDelay(this.aV, this.mV, w) - apV - (br ? br.reflectionDelay(this.loopV, f) : 0));
+    this.tH = Math.max(3.001, fs / fH - lpDelay(this.aH, this.mH, wH) - apH - (br ? br.reflectionDelay(this.loopH, fH) : 0));
     this.baseF = f; this.baseV = this.tV; this.baseH = this.tH;
     if (immediate) { this.dV = this.tV; this.dH = this.tH; this.dVinc = 0; this.dHinc = 0; }
   }
@@ -723,20 +757,22 @@ class PluckVoice {
     this.dHinc = (this.tH - this.dH) / n;
   }
 
+  // The loop is read between samples with a fifth-order Lagrange interpolator. A shorter one
+  // takes more from the highs than the string itself does, by an amount that changes from
+  // note to note with the fraction of a sample the loop ends on. The weights are kept until
+  // the loop length has changed by HOLD samples: a gliding pitch moves in steps that small.
   tickRead() {
     const m = this.mask, apN = this.apN, c = this.apC;
     // vertical polarisation
     let d = (this.dV += this.dVinc);
     let n0 = d | 0;
-    let x = d - n0 + 1;
-    let i = this.w - n0 + 1;
-    let b = this.bv;
-    let r = (-(x - 1) * (x - 2) * (x - 3) / 6) * b[i & m]
-      + (x * (x - 2) * (x - 3) / 2) * b[(i - 1) & m]
-      - (x * (x - 1) * (x - 3) / 2) * b[(i - 2) & m]
-      + (x * (x - 1) * (x - 2) / 6) * b[(i - 3) & m];
-    r = this.lpV = (1 - this.aV) * r + this.aV * this.lpV;
-    r *= this.gV;
+    let i = this.w - n0 + 2;
+    let b = this.bv, h = this.hV;
+    let e = d - this.hVd;
+    if (n0 !== this.hVn || e > HOLD || e < -HOLD) { lagrange(h, d - n0 + 2); this.hVd = d; this.hVn = n0; }
+    let r = h[0] * b[i & m] + h[1] * b[(i - 1) & m] + h[2] * b[(i - 2) & m] + h[3] * b[(i - 3) & m] + h[4] * b[(i - 4) & m] + h[5] * b[(i - 5) & m];
+    let lp = this.lpV = (1 - this.aV) * r + this.aV * this.lpV;
+    r = (r + this.mV * (lp - r)) * this.gV;
     for (let k = 0; k < apN; k++) {
       const y = c * r + this.axV[k] - c * this.ayV[k];
       this.axV[k] = r; this.ayV[k] = y; r = y;
@@ -745,15 +781,13 @@ class PluckVoice {
     // horizontal polarisation
     d = (this.dH += this.dHinc);
     n0 = d | 0;
-    x = d - n0 + 1;
-    i = this.w - n0 + 1;
-    b = this.bh;
-    let q = (-(x - 1) * (x - 2) * (x - 3) / 6) * b[i & m]
-      + (x * (x - 2) * (x - 3) / 2) * b[(i - 1) & m]
-      - (x * (x - 1) * (x - 3) / 2) * b[(i - 2) & m]
-      + (x * (x - 1) * (x - 2) / 6) * b[(i - 3) & m];
-    q = this.lpH = (1 - this.aH) * q + this.aH * this.lpH;
-    q *= this.gH;
+    i = this.w - n0 + 2;
+    b = this.bh; h = this.hH;
+    e = d - this.hHd;
+    if (n0 !== this.hHn || e > HOLD || e < -HOLD) { lagrange(h, d - n0 + 2); this.hHd = d; this.hHn = n0; }
+    let q = h[0] * b[i & m] + h[1] * b[(i - 1) & m] + h[2] * b[(i - 2) & m] + h[3] * b[(i - 3) & m] + h[4] * b[(i - 4) & m] + h[5] * b[(i - 5) & m];
+    lp = this.lpH = (1 - this.aH) * q + this.aH * this.lpH;
+    q = (q + this.mH * (lp - q)) * this.gH;
     for (let k = 0; k < apN; k++) {
       const y = c * q + this.axH[k] - c * this.ayH[k];
       this.axH[k] = q; this.ayH[k] = y; q = y;
@@ -1006,6 +1040,7 @@ class VibetarEngine {
       v.gain = isPair ? pr.pairGain[s] : pr.gain[s];
       v.b1 = isPair ? pr.pairB1[s] : pr.b1[s];
       v.b3 = isPair ? pr.pairB3[s] : pr.b3[s];
+      v.flat = ((isPair ? pr.pairFlat : pr.flat) || [])[s] || 0;
       const pick = (main, pair) => (isPair ? pr[pair][s] : pr[main][s]);
       v.B = pick('B', 'pairB');
       v.apN = sectionsFor(v.openF, v.B, fs);
