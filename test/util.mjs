@@ -65,13 +65,13 @@ export function peak(x, t0 = 0, t1 = x.length / FS, fs = FS) {
   return p;
 }
 
-export function engine(cfg = {}) {
-  const e = new VibetarEngine(FS);
+export function engine(cfg = {}, fs = FS) {
+  const e = new VibetarEngine(fs);
   e.configure({ preset: 'steel', open: OPEN, symp: 0, ...cfg });
   return e;
 }
-export function render(e, secs) {
-  const n = Math.floor((secs * FS) / 128) * 128, out = new Float32Array(n);
+export function render(e, secs, fs = FS) {
+  const n = Math.floor((secs * fs) / 128) * 128, out = new Float32Array(n);
   for (let i = 0; i < n; i += 128) e.render(out.subarray(i, i + 128), 128, i);
   return out;
 }
@@ -80,4 +80,14 @@ export function note(s, fret, extra = {}, cfg = {}, secs = 2.5) {
   const e = engine(cfg);
   e.post({ type: 'n', t: 0.01, s, f: midiHz(OPEN[s] + fret), v: 0.8, k: '', fr: fret > 0, d: 1, ...extra });
   return render(e, secs);
+}
+
+// brightness: magnitude-weighted spectral centroid (Hz) of x between t0 and t1, 60 Hz - 12 kHz
+export function centroid(x, t0, t1, fs = FS) {
+  let n = 1;
+  while (n < (t1 - t0) * fs) n <<= 1;
+  const m = spectrum(x, Math.floor(t0 * fs), n);
+  let a = 0, b = 0;
+  for (let i = Math.ceil((60 * n) / fs); i < (12000 * n) / fs; i++) { a += i * m[i]; b += m[i]; }
+  return ((a / b) * fs) / n;
 }

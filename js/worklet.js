@@ -102,6 +102,29 @@ const PRESETS = {
 
 const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
+// ---- the plucking hand -------------------------------------------------------
+// A pluck is a short contact at the plucking point: the plucker travels across
+// the string, pushing it aside through a spring (k) and damper (r), until the
+// force reaches what it can hold; then its grip decays over relMs.
+//   k, r      contact stiffness / damping, in units of twice the string's wave impedance.
+//             r >> 1 (flesh) pins the string to the finger; r ~ 1 would absorb it instead
+//   widthMm   length of string in contact
+//   holdMs    how long the stroke takes to load the string (at medium strength)
+//   thetaDeg  stroke direction: 0 = straight towards the top, 90 = along the top
+//   pos       plucking point relative to the instrument's "pick position"
+//   relMs     how long the string takes to slide off once the plucker lets go
+//   nail      a nail behind the flesh catches the string at `at` x the release force
+const PLUCKERS = [
+  { name: 'pick', k: 0.9, r: 0.3, widthMm: 1, relMs: 0.12, holdMs: 3, thetaDeg: 25, noise: 0.10, pos: 1.0, gain: 1 },
+  { name: 'flesh', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 40, noise: 0.02, pos: 1.25, gain: 1 },
+  { name: 'short nails', k: 0.3, r: 6, widthMm: 10, relMs: 0.9, holdMs: 4.5, thetaDeg: 45, noise: 0.02, pos: 1.1, gain: 1,
+    nail: { at: 0.7, relMs: 0.35, click: 0.04 } },
+  { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.12, holdMs: 4, thetaDeg: 50, noise: 0.08, pos: 1.0, gain: 1 },
+  { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
+];
+const PUSH = 0.1;    // how quickly the hand corrects its speed to have the force ready on time
+const SCALE = 0.648; // scale length in metres, for converting contact widths to samples
+
 // Contact positions, as distance from the bridge in fractions of the string.
 const PALM = [0.04, 0.065, 0.09]; // of the open string: the palm does not move with the fretting hand
 const PALM_K = 0.93;                 // light: absorbs without shortening the string
@@ -151,6 +174,146 @@ class PluckVoice {
     this.sqN = 0; this.sqLen = 1; this.sqPh = 0; this.sqRate = 0; this.sqPulse = 0; this.sqAmp = 0;
     this.sqB0 = 0; this.sqA1 = 0; this.sqA2 = 0;
     this.sqX1 = 0; this.sqX2 = 0; this.sqY1 = 0; this.sqY2 = 0; this.sqLp = 0;
+    // plucker contact
+    this.sIdx = 0;
+    this.contact = 0; this.contactFrames = 0; this.releaseFrame = 0; this.strokeFrame = 0;
+    this.pkA = 1; this.pkB = 2; this.pkW = 1;
+    this.pkK = 0; this.pkR = 0; this.pkRel = false;
+    this.pkXf = 0; this.pkY = 0; this.pkVf = 0; this.pkAcc = 1; this.pkDmax = 0; this.pkN = 0; this.pkMax = 0;
+    this.pkHold = 1; this.pkLast = 0; this.pkPush = 1; this.pkOn = 2; this.pkF0 = 0; this.pkRelAt = 0;
+    this.pkUv = 1; this.pkUh = 0; this.pkNoise = 0; this.pkNail = null; this.pkClick = 0; this.pkRelFrames = 1;
+  }
+
+  waveSpeed() { return 2 * SCALE * this.openF; }
+
+  // ---- plucking --------------------------------------------------------------
+
+  plucker(ev, P) {
+    const id = ev.fg != null ? ev.fg : P.pick === 4 ? (this.sIdx < 3 ? 0 : 2) : P.pick;
+    return PLUCKERS[id] || PLUCKERS[0];
+  }
+
+  // plucking point as round-trip distance from the bridge, in samples
+  pluckPoint(ev, P, f, harm) {
+    const N = this.fs / f, pl = this.plucker(ev, P);
+    const x = (harm ? 0.6 : pl.pos) * P.pickPos * (this.fs / this.openF) + (2 * (ev.pp || 0) * this.fs) / (1000 * this.waveSpeed());
+    return clamp(x, 0.03 * N, 0.5 * N);
+  }
+
+  // how long the stroke loads the string before letting go, in frames
+  strokeFrames(ev, P) {
+    const k = ev.k || '';
+    if ((k.indexOf('h') >= 0 || k.indexOf('s') >= 0) && this.sounding) return 0;
+    const fs = this.fs, pl = this.plucker(ev, P);
+    const f = ev.f * this.ratio * (this.pitchMul || 1);
+    let hold = ((pl.holdMs * fs) / 1000) * (1.4 - 0.6 * Math.min(1, ev.v));
+    hold = Math.min(Math.max(hold, 1.5 * this.pluckPoint(ev, P, f, k.indexOf('*') >= 0 && ev.hb > 0)), 0.006 * fs);
+    if (ev.gap > 0) hold = Math.min(hold, 0.8 * ev.gap * fs);
+    return Math.max(8, Math.round(hold));
+  }
+
+  startStroke(ev, P, f, harm, pm) {
+    const fs = this.fs, rnd = this.rnd, pl = this.plucker(ev, P);
+    const N = fs / f, vel = ev.v;
+    const hold = this.strokeFrames(ev, P);
+    const x = clamp(this.pluckPoint(ev, P, f, harm) * (1 + 0.06 * (rnd() - 0.5)), 0.03 * N, 0.5 * N);
+    const beta = x / N;
+    const setTaps = (widthMm) => {
+      const n0 = this.tV | 0, tau = N - this.tV;
+      let a = Math.max(1, Math.round((x - tau) / 2));
+      let b = Math.min(a + Math.round(N - x), n0 - 2);
+      let W = clamp(Math.round((widthMm * fs) / (1000 * this.waveSpeed())), 1, 9);
+      while (W > 1 && b - (W - 1) <= a + (W - 1) + 1) W--;
+      if (b <= a) b = a + 1;
+      this.pkA = a; this.pkB = b; this.pkW = W;
+    };
+    setTaps(pl.widthMm);
+    const att = Math.pow(4, P.pickHard - 0.5);
+    const firm = 0.6 + 0.5 * vel;
+    this.pkK = pl.k * att * firm * (pm ? 0.8 : 1);
+    this.pkR = pl.r;
+    // a release slower than a fraction of the period would not excite the string at all
+    const rel = (ms) => clamp(((ms * fs) / 1000 / att) * (1.6 - 0.8 * Math.min(1, vel)), 1.5, 0.2 * N);
+    this.pkRelFrames = rel(pl.relMs);
+    this.pkNail = pl.nail ? { at: pl.nail.at, rel: rel(pl.nail.relMs), click: pl.nail.click } : null;
+    // thinner / shorter strings carry less energy
+    this.pkDmax = vel * pl.gain * (harm ? 1.4 : 1) * (ev.rs ? 1.35 : 1) * clamp(Math.pow(f / 260, -0.38), 0.55, 1.4);
+    // finger path: accelerate, then travel at vF so the static force reaches dMax at the release time
+    const Kst = 1 / (N * beta * (1 - beta));
+    this.pkAcc = Math.max(1, 0.4 * hold); this.pkHold = hold; this.pkLast = 0; this.pkPush = 1; this.pkOn = Math.max(2, 0.0003 * fs);
+    this.pkVf = this.pkDmax / (1 + Kst * (hold - 0.5 * this.pkAcc));
+    this.pkMax = ev.lim > 0 ? Math.min(ev.lim, Math.round(1.5 * hold)) : Math.round(1.5 * hold);
+    const th = (((ev.rs ? 8 : pl.thetaDeg) + 10 * (rnd() - 0.5)) * Math.PI) / 180;
+    const dir = ev.d < 0 ? -1 : 1;
+    this.pkUv = Math.cos(th) * dir; this.pkUh = Math.sin(th) * dir;
+    this.excV = Math.abs(this.pkUv); this.excH = Math.abs(this.pkUh);
+    this.pkNoise = pl.noise * (this.wound ? 2 : 1);
+    this.pkXf = 0; this.pkY = 0; this.pkN = 0; this.pkRel = false; this.pkClick = 0;
+    this.contact = 1; this.contactFrames = 0;
+  }
+
+  // the fretting hand moving to another fret takes most of the old vibration with it
+  quiet(g) {
+    const bv = this.bv, bh = this.bh;
+    for (let i = 0; i < bv.length; i++) { bv[i] *= g; bh[i] *= g; }
+    this.lpV *= g; this.lpH *= g;
+    for (let i = 0; i < 4; i++) { this.axV[i] *= g; this.ayV[i] *= g; this.axH[i] *= g; this.ayH[i] *= g; }
+  }
+
+  letGo() {
+    this.pkRel = true;
+    this.pkF0 = this.pkLast; this.pkRelAt = this.pkN;
+    this.releaseFrame = this.strokeFrame + this.pkN;
+  }
+
+  pluckTick(bv, bh, w, m) {
+    const W = this.pkW, uV = this.pkUv, uH = this.pkUh;
+    const n = this.pkN++;
+    let dU, dP = 0;
+    if (this.pkRel) {
+      // the string slides off the plucker: its hold fades smoothly over the release time
+      const ph = (n - this.pkRelAt + 1) / this.pkRelFrames;
+      if (ph >= 1) { this.contact = 0; this.contactFrames = n; return; }
+      dU = this.pkF0 * 0.5 * (1 + Math.cos(Math.PI * ph));
+    } else {
+      let sV = 0, sH = 0;
+      for (let j = 0; j < W; j++) {
+        const ia = (w - this.pkA - j) & m, ib = (w - this.pkB + j) & m;
+        sV += bv[ia] - bv[ib]; sH += bh[ia] - bh[ib];
+      }
+      sV /= W; sH /= W;
+      const vU = sV * uV + sH * uH, vP = sH * uV - sV * uH; // string velocity along / across the stroke
+      // contact is made over a fraction of a millisecond, not in one sample
+      const g = Math.min(1, (n + 1) / this.pkOn);
+      // the hand feels the string: it speeds up or eases off so the force is there on time
+      const want = this.pkDmax * Math.min(1, (n + 1) / this.pkHold);
+      this.pkPush = clamp(this.pkPush + (PUSH * (want - this.pkLast)) / this.pkDmax, 0.25, 4);
+      const vF = this.pkVf * Math.min(1, (n + 1) / this.pkAcc) * this.pkPush;
+      this.pkXf += vF;
+      const k = this.pkK, r = this.pkR;
+      // implicit spring + damper along the stroke; the damper also acts across it
+      dU = (g * (k * (this.pkXf - this.pkY - vU) + r * (vF - vU))) / (1 + g * (k + r));
+      dP = (-g * r * vP) / (1 + g * r);
+      if (dU < 0) { dU = 0; dP = 0; } // the plucker cannot pull
+      else if (dU > this.pkDmax) dU = this.pkDmax; // nor hold more than this (a ringing string knocking against it)
+      this.pkY += vU + dU;
+      this.pkLast = dU;
+      const nl = this.pkNail;
+      if (nl && dU >= nl.at * this.pkDmax) {
+        // the nail catches the string: it will let go faster than flesh, with a faint click
+        this.pkRelFrames = nl.rel;
+        this.pkClick = nl.click * this.pkDmax;
+        this.pkNail = null;
+      }
+      if ((dU >= this.pkDmax && n >= 0.6 * this.pkHold) || n >= this.pkMax) this.letGo();
+      dU = dU * (1 + this.pkNoise * (2 * this.rnd() - 1)) + this.pkClick;
+      this.pkClick = 0;
+    }
+    const fV = (dU * uV - dP * uH) / W, fH = (dU * uH + dP * uV) / W;
+    for (let j = 0; j < W; j++) {
+      const ia = (w - this.pkA - j) & m, ib = (w - this.pkB + j) & m;
+      bv[ia] += fV; bv[ib] -= fV; bh[ia] += fH; bh[ib] -= fH;
+    }
   }
 
   // ---- contact points --------------------------------------------------------
@@ -254,7 +417,8 @@ class PluckVoice {
     if (immediate) { this.dV = this.tV; this.dH = this.tH; this.dVinc = 0; this.dHinc = 0; }
   }
 
-  buildExc(f, vel, P, tech, dir) {
+  // the small pulse of a hammer-on, pull-off or slide (the fretting hand, not the plucker)
+  tapExc(f, vel, P, tech, dir) {
     const fs = this.fs, rnd = this.rnd, exc = this.exc;
     const N = fs / f;
     let beta = P.pickPos * (f / this.openF);
@@ -300,9 +464,12 @@ class PluckVoice {
     if (!legato) {
       this.gFrom = 0; this.bendAmt = 0; this.vibDepth = 0;
       this.freq = f;
+      // a change of fret lets the old note go; on the same fret only the plucker damps it
+      if (Math.abs(this.curFreq / f - 1) > 0.01) this.quiet(0.2);
       this.retune(f, true);
-      this.dampCount = Math.round(N); this.dampGain = 0.1;
-      this.buildExc(f, ev.v, P, harm ? '*' : pm ? 'm' : '', ev.d);
+      this.excLen = 0;
+      this.strokeFrame = Math.round(t * this.fs);
+      this.startStroke(ev, P, f, harm, pm);
       if (k.indexOf('b') >= 0) { this.bendAmt = 2; this.bendT0 = t + 0.05; this.bendRise = 0.22; }
       else if (k.indexOf('v') >= 0) { this.vibDepth = 0.42; this.vibT0 = t + 0.16; }
       this.sounding = !dead;
@@ -317,7 +484,7 @@ class PluckVoice {
       this.freq = f;
       this.gFrom = from; this.gT0 = t; this.gStep = slide;
       this.gDur = slide ? clamp(0.035 * Math.abs(from), 0.07, 0.3) : 0.008;
-      this.buildExc(f, ev.v * (slide ? 0.1 : 0.4), P, 'soft', ev.d);
+      this.tapExc(f, ev.v * (slide ? 0.1 : 0.4), P, 'soft', ev.d);
       if (slide) this.squeak(this.gDur, clamp(Math.abs(from) / 7, 0.3, 1) * 0.8, P);
       if (pm) {
         this.retune(f, false);
@@ -337,7 +504,7 @@ class PluckVoice {
   mute(fast) {
     this.sounding = false;
     this.gFrom = 0; this.bendAmt = 0; this.vibDepth = 0;
-    this.excLen = 0;
+    this.excLen = 0; this.contact = 0;
     this.retune(this.curFreq, false);
     this.touch(STOP, this.fs / this.curFreq, 0.5, fast ? 0.004 : 0.012, 0);
     this.modPrev = true;
@@ -351,7 +518,7 @@ class PluckVoice {
     this.setDamping(this.freq, this.b1, this.b3);
     this.retune(this.freq, true);
     this.release(0);
-    this.sqN = 0;
+    this.sqN = 0; this.contact = 0;
   }
 
   updateMod(t, n) {
@@ -435,6 +602,7 @@ class PluckVoice {
     if (this.sqN > 0) { sq = this.squeakTick(); yv += 0.5 * sq; }
     const bv = this.bv, bh = this.bh, w = this.w, m = this.mask;
     bv[w] = yv; bh[w] = yh;
+    if (this.contact) this.pluckTick(bv, bh, w, m);
     if (this.tn > 0) {
       if (this.tk !== this.tkT) {
         if (this.tk < this.tkT) { this.tk += this.tkStep; if (this.tk > this.tkT) this.tk = this.tkT; }
@@ -461,6 +629,7 @@ class PluckVoice {
     this.axV.fill(0); this.ayV.fill(0); this.axH.fill(0); this.ayH.fill(0);
     this.lpV = 0; this.lpH = 0; this.excLen = 0; this.dampCount = 0;
     this.sqN = 0; this.sqX1 = this.sqX2 = this.sqY1 = this.sqY2 = this.sqLp = 0;
+    this.contact = 0;
   }
 }
 
@@ -608,7 +777,7 @@ class VibetarEngine {
     this.dcR = 1 - (TAU * 18) / fs;
     this.outGain = 0.3;
     this.pairGap = Math.round(0.011 * fs);
-    this.P = { pickPos: 0.17, pickHard: 0.72, pickNoise: 0.1, b1Scale: 1, b3Scale: 1, bowVib: 1, fingerNoise: 0.3 };
+    this.P = { pickPos: 0.17, pickHard: 0.72, pickNoise: 0.1, b1Scale: 1, b3Scale: 1, bowVib: 1, fingerNoise: 0.3, pick: 0 };
     this.configure({ preset: 'steel', open: [40, 45, 50, 55, 59, 64] });
   }
 
@@ -624,6 +793,7 @@ class VibetarEngine {
     if (c.bright != null) P.b3Scale = Math.pow(5, -clamp(c.bright, -1, 1));
     if (c.vibrato != null) P.bowVib = clamp(c.vibrato, 0, 2);
     if (c.fingerNoise != null) P.fingerNoise = clamp(c.fingerNoise, 0, 1);
+    if (c.pick != null) P.pick = clamp(Math.round(c.pick), 0, 4);
     P.pickNoise = pr.pickNoise || 0;
     this.mode = pr.mode;
     const nPair = pr.pair ? 6 : 0;
@@ -657,6 +827,7 @@ class VibetarEngine {
         v.polDet = Math.pow(2, cents / 1200);
         v.alpha = this.alpha;
         v.wound = !isPair && s < (pr.wound || 0);
+        v.sIdx = s;
         // longitudinal resonance that colours the finger noise
         const w0 = (TAU * (1500 + 330 * s)) / fs, al = Math.sin(w0) / 5;
         v.sqB0 = al / (1 + al); v.sqA1 = (-2 * Math.cos(w0)) / (1 + al); v.sqA2 = (1 - al) / (1 + al);
@@ -667,8 +838,11 @@ class VibetarEngine {
 
   post(ev) {
     const q = this.queue;
-    if (ev.t != null) ev.frame = Math.round(ev.t * this.fs);
-    else if (ev.frame == null) ev.frame = 0;
+    if (ev.t != null) {
+      ev.frame = Math.round(ev.t * this.fs);
+      // a note's time is when the string is let go: the stroke starts earlier
+      if (ev.type === 'n' && this.mode === 'pluck') ev.frame = Math.max(0, ev.frame - this.voices[ev.s].strokeFrames(ev, this.P));
+    } else if (ev.frame == null) ev.frame = 0;
     let i = q.length;
     while (i > 0 && q[i - 1].frame > ev.frame) i--;
     q.splice(i, 0, ev);
@@ -678,11 +852,15 @@ class VibetarEngine {
     const t = frame / this.fs, vs = this.voices;
     switch (ev.type) {
       case 'n': {
+        // the stroke must be over when the string's next stroke begins
+        if (this.mode === 'pluck') {
+          for (const nx of this.queue) if (nx.type === 'n' && nx.s === ev.s && nx.vi == null) { ev.lim = Math.max(4, nx.frame - frame - 2); break; }
+        }
         if (this.pairs && ev.vi == null) {
           const first = ev.d < 0 ? ev.s : ev.s + 6;
           const second = ev.d < 0 ? ev.s + 6 : ev.s;
           this.note(vs[first], ev, t);
-          this.post({ type: 'n', vi: second, frame: frame + this.pairGap + ((this.rnd() * 90) | 0), s: ev.s, f: ev.f, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb });
+          this.post({ type: 'n', vi: second, frame: frame + this.pairGap + ((this.rnd() * 90) | 0), s: ev.s, f: ev.f, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim });
         } else {
           this.note(vs[ev.vi != null ? ev.vi : ev.s], ev, t);
         }
@@ -706,7 +884,7 @@ class VibetarEngine {
 
   note(v, ev, t) {
     if (v.pitchMul && v.pitchMul !== 1) {
-      v.noteOn({ f: ev.f * v.pitchMul, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb }, this.P, t);
+      v.noteOn({ f: ev.f * v.pitchMul, v: ev.v, k: ev.k, fr: ev.fr, d: ev.d, hb: ev.hb, fg: ev.fg, rs: ev.rs, pp: ev.pp, lim: ev.lim }, this.P, t);
     } else v.noteOn(ev, this.P, t);
   }
 
@@ -771,4 +949,4 @@ if (typeof registerProcessor === 'function') {
   });
 }
 
-export { VibetarEngine, PRESETS, designDamping, midiHz };
+export { VibetarEngine, PRESETS, PLUCKERS, SCALE, designDamping, midiHz };
