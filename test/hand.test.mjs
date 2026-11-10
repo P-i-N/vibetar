@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { barreOf, fingering, planHand, handPath } from '../js/hand.js';
-import { DEMOS } from '../js/demos.js';
+import { SONGS } from './songs.mjs';
 import * as S from '../js/song.js';
 
 const OPEN = [40, 45, 50, 55, 59, 64];
@@ -13,7 +13,7 @@ function cols(n, notes) {
 }
 const plan = (c, spb = 2) => planHand(c, { stepSecs: 60 / 90 / spb, spb, bar: spb * 4, open: OPEN });
 const shapeNotes = (frets) => frets.map((f, s) => [s, f]).filter(([, f]) => f > 0);
-const demo = (name) => DEMOS.find((d) => d.name.startsWith(name)).make();
+const demo = (name) => SONGS.find((d) => d.name.startsWith(name)).make();
 const demoPlan = (song) => planHand(song.cols, { stepSecs: 60 / song.bpm / song.spb, spb: song.spb, bar: S.stepsPerBar(song), open: song.tuning.map((m) => m + song.capo) });
 
 test('a barre is the index finger flat across the lowest fret of a shape that needs it', () => {

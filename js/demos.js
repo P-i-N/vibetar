@@ -1,4 +1,5 @@
-// Demo songs: each shows some of what the instrument can do.
+// Demo songs: seven pieces that between them use every instrument, picking technique,
+// technique mark, tuning, grid and reverb space.
 
 import { newSong, emptyCols, setCell, INSTRUMENTS, FX_DEFAULTS, REVERBS, TUNINGS } from './song.js';
 
@@ -10,401 +11,250 @@ function make(title, bpm, spb, bpb, bars, inst, fx) {
   return s;
 }
 const put = (song, step, s, f, t = '') => setCell(song, step, s, { f, t });
-
-const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-// MIDI number of a note name such as 'F#3' or 'Bb2'
-function midiOf(name) {
-  const m = /^([A-G])([#b]?)(\d)$/.exec(name);
-  if (!m) throw new Error(`bad note name ${name}`);
-  return 12 * (+m[3] + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
-}
-// a note by its pitch on string s; a pitch the string cannot play is a mistake in the demo
-function note(song, step, s, name, t = '') {
-  const f = midiOf(name) - song.tuning[s] - song.capo;
-  if (f < 0 || f > 24) throw new Error(`${song.title}: ${name} is not on string ${s}`);
-  put(song, step, s, f, t);
-}
-// frets per string, low to high (-1: not played)
-const shape = (song, step, frets, t = '') => frets.forEach((f, s) => { if (f >= 0) put(song, step, s, f, t); });
+// notes of bar n: [step in the bar, string, fret, flags]
+const bar = (song, n, notes) => { for (const [st, s, f, t] of notes) put(song, n * song.spb * song.bpb + st, s, f, t || ''); };
+// frets per string, low to high (-1: not played), from string `from` up
+const shape = (song, step, frets, t = '', from = 0) => frets.forEach((f, s) => { if (f >= 0 && s >= from) put(song, step, s, f, t); });
 // the settings of a reverb space
 const space = (key) => { const { name, ...fx } = REVERBS[key]; return fx; };
+const lowest = (frets) => frets.findIndex((f) => f >= 0);
 
-function firstLight() {
-  const song = make('First Light', 74, 4, 4, 9, { preset: 'steel' }, { revMix: 0.3, revSize: 2.6, dlyOn: true, dlyMix: 0.12, dlyFb: 0.3, dlyTime: '8d' });
-  const C = { sh: [-1, 3, 2, 0, 3, 3], b: 1, a: 2 };
-  const G = { sh: [3, 2, 0, 0, 3, 3], b: 0, a: 2 };
-  const Em = { sh: [0, 2, 2, 0, 3, 3], b: 0, a: 2 };
-  const Ds = { sh: [-1, 0, 0, 2, 3, 3], b: 2, a: 1 };
-  const D = { sh: [-1, 0, 0, 2, 3, 2], b: 2, a: 1 };
-  const As = { sh: [-1, 0, 2, 0, 3, 3], b: 1, a: 2 };
-  const h1 = [[0, 'b', 4], [2, 3], [3, 5], [4, 'a'], [6, 4], [7, 3]];
-  const h2 = [[0, 'b'], [2, 5], [3, 4], [4, 'a'], [6, 3], [7, 4]];
-  const half = (bar, hi, ch, pat) => {
-    for (const [st, ...rs] of pat) for (const r of rs) {
-      const s = r === 'b' ? ch.b : r === 'a' ? ch.a : r;
-      put(song, bar * 16 + hi * 8 + st, s, ch.sh[s]);
-    }
+// Steel string, short nails. A falling bass line under a sixteenth-note arpeggio; the second
+// time round the top string sings: hammer-ons, slides and a pull-off. Ends on the chime of
+// three harmonics that make the home chord.
+function daybreak() {
+  const song = make('Daybreak', 76, 4, 4, 17, { preset: 'steel', picking: 2 }, { ...space('stage'), dlyOn: true, dlyTime: '8d', dlyMix: 0.1, dlyFb: 0.3, vol: 0.95 });
+  const D = [-1, -1, 0, 2, 3, 2], AC = [-1, 4, 2, 2, 2, 0], Bm = [-1, 2, 0, 2, 0, 2], GM = [3, -1, 0, 0, 0, 2], G = [3, -1, 0, 0, 3, 3];
+  const DF = [2, -1, 0, 2, 3, 2], Em = [0, 2, 2, 0, 3, 0], As = [-1, 0, 2, 0, 3, 0], A = [-1, 0, 2, 2, 2, 0];
+  // one bar: the bass with the top string, the inner strings, the other bass, and again
+  const arpeggio = (n, first, second = first, accent = false) => {
+    const b = lowest(first), b2 = lowest(second);
+    const steps = [[0, b], [0, 5], [2, 3], [3, 4], [4, 5], [6, 3], [7, 4], [8, b2 < 2 ? 2 : b2], [10, 3], [11, 4], [12, 5], [14, 4], [15, 3]];
+    bar(song, n, steps.map(([st, s], k) => [st, s, (st < 8 ? first : second)[s], accent && !k ? '>' : '']));
   };
-  const seq = [[C, C], [G, G], [Em, Em], [Ds, D], [C, C], [G, G], [As, Ds], [C, D]];
-  seq.forEach(([a, b], bar) => { half(bar, 0, a, h1); half(bar, 1, b, h2); });
-  // a few ornaments
-  put(song, 0, 1, 3, '>');
-  put(song, 16 + 4, 2, 0); put(song, 16 + 5, 2, 2, 'h');
-  put(song, 32 + 12, 2, 0); put(song, 32 + 13, 2, 2, 'h');
-  put(song, 48 + 10, 5, 3); put(song, 48 + 11, 5, 2, 'h');
-  put(song, 80 + 4, 2, 0); put(song, 80 + 5, 2, 2, 'h');
-  put(song, 96 + 3, 5, 3, 'v');
-  put(song, 112 + 15, 5, 2, 'v');
-  // ending: slow G strum and 12th-fret harmonics
-  [3, 2, 0, 0, 3, 3].forEach((f, s) => put(song, 128, s, f, s === 0 ? '>' : ''));
-  put(song, 128 + 6, 3, 12, '*'); put(song, 128 + 8, 4, 12, '*'); put(song, 128 + 10, 5, 12, '*');
+  [D, AC, Bm, GM, DF, Em, As, A].forEach((c, i) => arpeggio(i, c, c, i === 0));
+  [D, AC, Bm, G, DF, GM].forEach((c, i) => arpeggio(8 + i, c, c, i === 0));
+  arpeggio(14, As);
+  arpeggio(15, As, A);
+  // the melody on the top string
+  bar(song, 8, [[4, 5, 3, 'h'], [12, 5, 5, 's']]);
+  bar(song, 10, [[12, 5, 5, 'sv']]);
+  bar(song, 11, [[12, 5, 2, 'h']]);
+  bar(song, 12, [[13, 5, 3, 'h'], [14, 5, 2, 'h']]);
+  bar(song, 13, [[4, 5, 3, 'h'], [12, 5, 2, 'h']]);
+  bar(song, 15, [[11, 4, 2, 'h']]);
+  shape(song, 16 * 16, [-1, 0, 0, 2, 3, 2]);
+  put(song, 16 * 16, 1, 0, '>');
+  bar(song, 16, [[8, 2, 7, '*'], [10, 3, 7, '*'], [12, 4, 7, '*']]);
   return song;
 }
 
-function campfire() {
-  const song = make('Campfire', 96, 4, 4, 8, { preset: 'twelve', strum: 17 }, { revMix: 0.22, revSize: 1.8 });
-  const chords = [[0, 2, 2, 0, 0, 0], [-1, 3, 2, 0, 1, 0], [3, 2, 0, 0, 0, 3], [-1, -1, 0, 2, 3, 2]];
-  for (let bar = 0; bar < 8; bar++) {
-    const sh = chords[bar % 4], o = bar * 16;
-    const strum = (st, from, t) => { for (let s = from; s < 6; s++) if (sh[s] >= 0) put(song, o + st, s, sh[s], t && s === sh.findIndex((f) => f >= 0) ? t : ''); };
-    if (bar === 7) { strum(0, 0, '>'); continue; }
-    strum(0, 0, '>'); strum(4, 0); strum(6, 2); strum(10, 2); strum(12, 0); strum(14, 3);
-    for (let s = 1; s < 4; s++) put(song, o + 8, s, 'x');
-  }
-  return song;
-}
-
-function romance() {
-  const song = make('Romance (trad.)', 84, 3, 3, 16, { preset: 'nylon', human: 0.3 }, { revMix: 0.34, revSize: 3.2, revTone: 0.42 });
-  // [melody frets on the high e], B-string fret, G-string fret, [bass string, fret]
-  const bars = [
-    [[7, 7, 7], 0, 0, [0, 0]], [[7, 5, 3], 0, 0, [0, 0]], [[3, 2, 0], 0, 0, [0, 0]], [[0, 3, 7], 0, 0, [0, 0]],
-    [[12, 12, 12], 0, 0, [0, 0]], [[12, 10, 8], 0, 0, [0, 0]], [[8, 7, 5], 5, 5, [1, 0]], [[5, 7, 8], 5, 5, [1, 0]],
-    [[7, 8, 7], 7, 8, [0, 7]], [[11, 8, 7], 7, 8, [0, 7]], [[7, 5, 3], 0, 0, [0, 0]], [[3, 2, 0], 0, 0, [0, 0]],
-    [[2, 2, 2], 0, 2, [1, 2]], [[2, 3, 2], 0, 2, [1, 2]], [[0, 0, 0], 0, 0, [0, 0]],
-  ];
-  bars.forEach(([mel, b, g, bass], bar) => {
-    const o = bar * 9;
-    put(song, o, bass[0], bass[1]);
-    mel.forEach((f, beat) => {
-      put(song, o + beat * 3, 5, f, beat === 0 && bar % 4 === 0 ? '>' : '');
-      put(song, o + beat * 3 + 1, 4, b);
-      put(song, o + beat * 3 + 2, 3, g);
-    });
-  });
-  const o = 15 * 9;
-  put(song, o, 0, 0); put(song, o, 2, 2); put(song, o, 3, 0); put(song, o, 4, 0); put(song, o, 5, 0);
-  return song;
-}
-
-function nightDrive() {
-  const song = make('Night Drive', 112, 4, 4, 5, { preset: 'steel', pickHard: 0.8, fingerNoise: 0.45 }, { revMix: 0.2, revSize: 1.6, dlyOn: true, dlyTime: '8d', dlyMix: 0.1, dlyFb: 0.25 });
-  const chug = (bar, steps, fret = 0) => { for (const st of steps) put(song, bar * 16 + st, 0, fret, 'm'); };
-  const power = (bar, st, fret) => { put(song, bar * 16 + st, 0, fret, '>'); put(song, bar * 16 + st, 1, fret + 2); put(song, bar * 16 + st, 2, fret + 2); };
-  chug(0, [0, 2, 4, 6, 8, 10]); power(0, 12, 3); chug(0, [14], 3);
-  chug(1, [0, 2, 4, 6]); power(1, 8, 5); chug(1, [10], 5); power(1, 12, 3); chug(1, [14], 3);
-  chug(2, [0, 2, 4, 6, 8, 10]); power(2, 12, 3); chug(2, [14], 3);
-  chug(3, [0, 2, 4, 6]); power(3, 8, 7); put(song, 3 * 16 + 10, 0, 5, 'm'); put(song, 3 * 16 + 12, 0, 3, 'm'); put(song, 3 * 16 + 14, 0, 2, 'mh');
-  [0, 2, 2, 1, 0, 0].forEach((f, s) => put(song, 64, s, f, s === 0 ? '>' : ''));
-  put(song, 64 + 8, 3, 12, '*'); put(song, 64 + 10, 4, 12, '*'); put(song, 64 + 12, 5, 12, '*');
-  put(song, 64 + 14, 5, 7, '*');
-  return song;
-}
-
-// Nylon, short nails, 3/4. The melody on the treble strings, the bass on beat 1, a chord
-// tone on beat 2; verse and refrain.
-function greensleeves() {
-  const song = make('Greensleeves (trad.)', 92, 2, 3, 33, { preset: 'nylon', picking: 2 }, space('hall'));
-  const STR = { E3: 2, 'F#3': 2, G3: 3, 'G#3': 3, A3: 3, B3: 4, C4: 4, D4: 4, E4: 5, F4: 5, 'F#4': 5, G4: 5 };
-  const CHORD = { Am: ['A2', 1, 'E3'], C: ['C3', 1, 'E3'], G: ['G2', 0, 'D3'], Em: ['E2', 0, 'E3'], E: ['E2', 0, 'E3'] };
-  const open = [[[0, 'C4'], [4, 'D4']], [[0, 'E4'], [3, 'F4'], [4, 'E4']], [[0, 'D4'], [4, 'B3']], [[0, 'G3'], [3, 'A3'], [4, 'B3']]];
-  const refrain = [[[0, 'G4']], [[0, 'G4'], [3, 'F#4'], [4, 'E4']], [[0, 'D4'], [4, 'B3']], [[0, 'G3'], [3, 'A3'], [4, 'B3']]];
-  const middle = [[[0, 'C4'], [4, 'A3']], [[0, 'A3'], [3, 'G#3'], [4, 'A3', 'h']], [[0, 'B3'], [4, 'G#3']]];
-  const close = [[[0, 'C4'], [3, 'B3'], [4, 'A3']], [[0, 'G#3'], [3, 'F#3'], [4, 'G#3']], [[0, 'A3']]];
-  const bars = [...open, ...middle, [[0, 'E3'], [4, 'A3']], ...open, ...close, ...refrain, ...middle, [[0, 'E3']], ...refrain, ...close];
-  const chords = ['Am', 'C', 'G', 'Em', 'Am', 'E', 'E', 'Am', 'Am', 'C', 'G', 'Em', 'Am', 'E', 'Am',
-    'C', 'G', 'G', 'Em', 'Am', 'E', 'E', 'E', 'C', 'G', 'G', 'Em', 'Am', 'E', 'Am'];
-  note(song, 4, 3, 'A3');
-  bars.forEach((mel, i) => {
-    const o = (i + 1) * 6, [bass, bs, inner] = CHORD[chords[i]];
-    note(song, o, bs, bass);
-    if (!mel.some(([, n]) => STR[n] === 2)) note(song, o + 2, 2, inner);
-    for (const [st, n, t] of mel) note(song, o + st, STR[n], n, t);
-  });
-  shape(song, 31 * 6, [-1, 0, 2, 2, 1, 0]);
-  put(song, 31 * 6, 1, 0, '>');
-  put(song, 32 * 6, 0, 12, '*'); put(song, 32 * 6 + 2, 1, 12, '*'); put(song, 32 * 6 + 4, 5, 12, '*');
-  return song;
-}
-
-// Open G, fingers. The melody on the top string, slid into and sung with vibrato, the high
-// D as a harmonic; the bass and a dyad below.
-function amazingGrace() {
-  const song = make('Amazing Grace (trad.)', 76, 2, 3, 17, { preset: 'steel', picking: 1 }, space('church'));
-  song.tuning = [...TUNINGS['Open G']];
-  const mel = [
-    [[4, 'D4']],
-    [[0, 'G4', 'v'], [4, 'B4', 's'], [5, 'G4']], [[0, 'B4', 'v'], [4, 'A4', 's']], [[0, 'G4'], [4, 'E4', 's']], [[0, 'D4'], [4, 'D4']],
-    [[0, 'G4', 'v'], [4, 'B4', 's'], [5, 'G4']], [[0, 'B4', 'v'], [4, 'A4', 's']], [[0, 'D5', '*']], [[4, 'B4']],
-    [[0, 'D5', 'v'], [4, 'B4', 's'], [5, 'G4']], [[0, 'B4', 'v'], [4, 'A4', 's']], [[0, 'G4'], [4, 'E4', 's']], [[0, 'D4'], [4, 'D4']],
-    [[0, 'G4', 'v'], [4, 'B4', 's'], [5, 'G4']], [[0, 'B4', 'v'], [4, 'A4', 's']], [[0, 'G4', 'v']],
-  ];
-  const CHORD = { G: [1, 'G2', 'D3', 'G3'], C: [1, 'C3', 'G3', 'C4'], D: [0, 'D2', 'A3', 'D4'] };
-  const chords = ['G', 'G', 'C', 'G', 'G', 'G', 'D', 'D', 'G', 'G', 'C', 'G', 'G', 'D', 'G'];
-  mel.forEach((bar, i) => {
-    const o = i * 6;
-    for (const [st, n, t] of bar) note(song, o + st, 5, n, t);
-    if (!i) return;
-    const [bs, bass, lo, hi] = CHORD[chords[i - 1]];
-    note(song, o, bs, bass);
-    for (const st of bar.length === 1 && bar[0][0] === 0 ? [2, 4] : [2]) { note(song, o + st, 2, lo); note(song, o + st, 3, hi); }
-  });
-  shape(song, 16 * 6, [12, 12, 12, 12, 12, 12], '*');
-  for (const s of [3, 4, 5]) put(song, 16 * 6 + 3, s, 5, '*');
-  return song;
-}
-
-// A jig in 6/8 (two beats of three eighths), flatpicked: the pick alternates through the runs.
-function washerwoman() {
-  const song = make('The Irish Washerwoman (trad.)', 112, 3, 2, 18, { preset: 'steel', picking: 0, pickHard: 0.8 }, space('room'));
-  const STR = { D3: 2, E3: 2, G3: 3, A3: 3, B3: 4, C4: 4, D4: 4, E4: 5 };
-  const A = [
-    ['B3', 'G3', 'G3', 'D3', 'G3', 'G3'], ['B3', 'G3', 'B3', 'D4', 'C4', 'B3'],
-    ['C4', 'A3', 'A3', 'E3', 'A3', 'A3'], ['C4', 'A3', 'C4', 'E4', 'D4', 'C4'],
-    ['B3', 'G3', 'G3', 'D3', 'G3', 'G3'], ['B3', 'G3', 'B3', 'D4', 'C4', 'B3'],
-    ['C4', 'D4', 'C4', 'B3', 'C4', 'A3'],
-  ];
-  const flags = { '6:1': 'h', '6:2': 'h' }; // a hammer-on and pull-off in the seventh bar
-  const pickup = (bar) => { note(song, bar * 6 + 4, 4, 'D4'); note(song, bar * 6 + 5, 4, 'C4'); };
-  pickup(0);
-  for (const start of [1, 9]) {
-    A.forEach((bar, i) => bar.forEach((n, k) => note(song, (start + i) * 6 + k, STR[n], n, flags[`${i}:${k}`] || '')));
-    note(song, (start + 7) * 6, 3, 'G3');
-  }
-  pickup(8);
-  shape(song, 16 * 6, [3, 2, 0, 0, 0, 3]);
-  put(song, 16 * 6, 0, 3, '>');
-  for (const [k, s] of [[0, 2], [1, 3], [2, 4]]) put(song, 17 * 6 + k, s, 12, '*');
-  return song;
-}
-
-// 12-string arpeggios in 6/8: the bass, then up and down the three treble strings.
-function risingSun() {
-  const song = make('The House of the Rising Sun (trad.)', 76, 3, 2, 33, { preset: 'twelve', picking: 0 }, { ...space('stage'), dlyOn: true, dlyTime: '8', dlyMix: 0.08, dlyFb: 0.25 });
-  const SHAPE = { Am: [-1, 0, 2, 2, 1, 0], C: [-1, 3, 2, 0, 1, 0], D: [-1, -1, 0, 2, 3, 2], F: [1, 3, 3, 2, 1, 1], E: [0, 2, 2, 1, 0, 0] };
-  const BASS = { Am: 1, C: 1, D: 2, F: 0, E: 0 };
-  const verse = ['Am', 'C', 'D', 'F', 'Am', 'C', 'E', 'E', 'Am', 'C', 'D', 'F', 'Am', 'E', 'Am', 'E'];
-  [...verse, ...verse].forEach((c, i) => {
-    const sh = SHAPE[c];
-    [BASS[c], 3, 4, 5, 4, 3].forEach((s, k) => put(song, i * 6 + k, s, sh[s], k === 0 && i % 4 === 0 ? '>' : ''));
-  });
-  shape(song, 32 * 6, SHAPE.Am);
-  return song;
-}
-
-// Nylon, long nails, 3/8 in sixteenths: the opening, both endings and the first episode,
-// with pull-offs.
-function furElise() {
-  const song = make('Für Elise (L. v. Beethoven)', 132, 2, 3, 23, { preset: 'nylon', picking: 3 }, space('studio'));
-  const m1 = [[0, 5, 'E4'], [1, 4, 'D#4'], [2, 5, 'E4'], [3, 4, 'B3'], [4, 4, 'D4'], [5, 4, 'C4']];
-  const m2 = [[0, 3, 'A3'], [0, 1, 'A2'], [1, 2, 'E3'], [3, 1, 'C3'], [4, 2, 'E3'], [5, 3, 'A3']];
-  const m3 = [[0, 4, 'B3'], [0, 0, 'E2'], [1, 3, 'G#3'], [3, 2, 'E3'], [4, 3, 'G#3'], [5, 4, 'B3']];
-  const m4 = [[0, 4, 'C4'], [0, 1, 'A2'], [1, 2, 'E3'], [3, 2, 'E3'], [4, 5, 'E4'], [5, 4, 'D#4']];
-  const m7 = [[0, 4, 'B3'], [0, 0, 'E2'], [1, 3, 'G#3'], [3, 2, 'E3'], [4, 4, 'C4'], [5, 4, 'B3', 'h']];
-  const end1 = [[0, 3, 'A3'], [0, 1, 'A2'], [1, 2, 'E3'], [4, 5, 'E4'], [5, 4, 'D#4']];
-  const end2 = [[0, 3, 'A3'], [0, 1, 'A2'], [1, 2, 'E3'], [3, 4, 'B3'], [4, 4, 'C4'], [5, 4, 'D4']];
-  const m10 = [[0, 5, 'E4'], [0, 1, 'C3'], [1, 3, 'G3'], [2, 4, 'C4'], [3, 3, 'G3'], [4, 5, 'F4'], [5, 5, 'E4', 'h']];
-  const m11 = [[0, 4, 'D4'], [0, 0, 'G2'], [1, 2, 'D3'], [2, 3, 'G3'], [3, 2, 'F3'], [4, 5, 'E4'], [5, 4, 'D4']];
-  const m12 = [[0, 4, 'C4'], [0, 1, 'A2'], [1, 2, 'E3'], [2, 3, 'A3'], [3, 2, 'E3'], [4, 4, 'D4'], [5, 4, 'C4', 'h']];
-  const m13 = [[0, 4, 'B3'], [0, 0, 'E2'], [1, 2, 'E3'], [3, 2, 'E3'], [4, 3, 'G#3'], [5, 4, 'B3']];
-  const last = [[0, 1, 'A2'], [1, 2, 'E3'], [2, 3, 'A3'], [3, 4, 'C4'], [4, 5, 'E4']];
-  const half = [m1, m2, m3, m4, m1, m2, m7];
-  const bars = [[[4, 5, 'E4'], [5, 4, 'D#4']], ...half, end1, ...half, end2, m10, m11, m12, m13, last];
-  bars.forEach((bar, i) => { for (const [st, s, n, t] of bar) note(song, i * 6 + st, s, n, t); });
-  put(song, 22 * 6, 1, 12, '*'); put(song, 22 * 6 + 2, 5, 12, '*');
-  return song;
-}
-
-// Capo 2: C-major shapes sound in D. Eight chords of two beats, three times: bass and
-// arpeggio; with the falling line; with that line an octave up the top string.
-function canon() {
-  const song = make('Canon in D (J. Pachelbel)', 66, 2, 4, 13, { preset: 'steel', picking: 1 }, { ...space('cathedral'), dlyOn: true, dlyTime: '4', dlyMix: 0.1, dlyFb: 0.3 });
-  song.capo = 2;
-  // [bass string, fret], two inner [string, fret], all relative to the capo
-  const C = [[1, 3], [2, 2], [3, 0]], G = [[0, 3], [2, 0], [3, 0]], Am = [[1, 0], [2, 2], [3, 2]];
-  const Em = [[0, 0], [2, 2], [3, 0]], F = [[0, 1], [2, 3], [3, 2]];
-  const chords = [C, G, Am, Em, F, C, F, G];
-  const low = [[5, 0], [4, 3], [4, 1], [4, 0], [3, 2], [3, 0], [3, 2], [4, 0]];
-  const high = [[5, 12, '*'], [5, 10, 'v'], [5, 8, 's'], [5, 7, 's'], [5, 5, 'v'], [5, 3, 's'], [5, 5, 'h'], [5, 7, 's']];
-  for (let pass = 0; pass < 3; pass++) chords.forEach(([bass, a, b], c) => {
-    const o = pass * 32 + c * 4, mel = pass === 1 ? low[c] : pass === 2 ? high[c] : null;
-    put(song, o, ...bass);
-    if (mel) put(song, o, mel[0], mel[1], mel[2] || '');
-    put(song, o + 1, ...a);
-    if (!mel || mel[0] !== b[0]) put(song, o + 2, ...b);
-    put(song, o + 3, ...a);
-  });
-  shape(song, 96, [-1, 3, 2, 0, 1, 0]);
-  put(song, 96, 1, 3, '>');
-  put(song, 100, 5, 12, '*');
-  return song;
-}
-
-// Hybrid picking: the pick takes the bass, the fingers the melody; dead-note chops on beats
-// 2 and 4, and a walking bass in swung eighths (triplet grid).
-function saints() {
-  const song = make('When the Saints Go Marching In (trad.)', 120, 3, 4, 16, { preset: 'steel', picking: 4 }, space('studio'));
-  const STR = { C4: 4, D4: 4, E4: 5, F4: 5, G4: 5 };
-  // [beat, note, flags] per bar
-  const mel = [
-    [[1, 'C4'], [2, 'E4'], [3, 'F4']], [[0, 'G4', '>']], [[1, 'C4'], [2, 'E4'], [3, 'F4']], [[0, 'G4', '>']],
-    [[1, 'C4'], [2, 'E4'], [3, 'F4']], [[0, 'G4'], [2, 'E4']], [[0, 'C4'], [2, 'E4']], [[0, 'D4', 'v']],
-    [[1, 'E4'], [2, 'E4'], [3, 'D4']], [[0, 'C4'], [3, 'C4']], [[0, 'E4'], [2, 'G4'], [3, 'G4']], [[0, 'F4', 'v'], [2, 'E4'], [3, 'F4']],
-    [[0, 'G4'], [2, 'E4']], [[0, 'C4'], [2, 'D4']], [[0, 'C4', 'v']],
-  ];
-  const BASS = { C: [[1, 'C3'], [0, 'G2']], G: [[0, 'G2'], [2, 'D3']], F: [[0, 'F2'], [1, 'C3']] };
-  const chords = ['C', 'C', 'C', 'C', 'C', 'C', 'C', 'G', 'G', 'C', 'C', 'F', 'C', 'G', 'C'];
-  // walks into the next chord: [bar, step, string, note]
-  const walks = [[6, 6, 0, 'E2'], [6, 9, 0, 'F#2'], [8, 9, 1, 'A2'], [8, 11, 1, 'B2'], [10, 9, 0, 'E2'], [13, 9, 0, 'A2'], [13, 11, 0, 'B2']];
-  mel.forEach((bar, i) => {
-    const o = i * 12, [root, fifth] = BASS[chords[i]];
-    note(song, o, root[0], root[1]);
-    note(song, o + 6, fifth[0], fifth[1]);
-    for (const st of [3, 9]) { put(song, o + st, 2, 'x'); put(song, o + st, 3, 'x'); }
-    for (const [beat, n, t] of bar) note(song, o + beat * 3, STR[n], n, t);
-  });
-  for (const [bar, st, s, n] of walks) note(song, bar * 12 + st, s, n);
-  shape(song, 15 * 12, [-1, 3, 2, 0, 1, 0]);
-  put(song, 15 * 12, 1, 3, '>');
-  put(song, 15 * 12 + 6, 5, 12, '*');
-  return song;
-}
-
-// A 12-bar shuffle, tuned half a step down: palm-muted boogie bass in swung triplets, licks
-// with bends, hammer-ons and vibrato, one of them up at the 12th fret.
-function deltaShuffle() {
-  const song = make('Delta Shuffle', 88, 3, 4, 13, { preset: 'steel', picking: 0, pickHard: 0.8, fingerNoise: 0.45 }, space('room'));
-  song.tuning = [...TUNINGS['Half step down']];
-  // root [string, fret], then the fret of the next string up on beats 1, 3 and on beats 2, 4
-  const BOOGIE = { E: [0, 0, 2, 4], A: [1, 0, 2, 4], B: [1, 2, 4, 6] };
-  const boogie = (bar, c, beats) => {
-    const [s, f, lo, hi] = BOOGIE[c];
-    for (const b of beats) for (const st of [b * 3, b * 3 + 2]) { put(song, bar * 12 + st, s, f, 'm'); put(song, bar * 12 + st, s + 1, b % 2 ? hi : lo, 'm'); }
+// Nylon, long nails, in three: the Andalusian cadence. Strummed chords; then the thumb plays
+// the tune on the bass strings while two open strings keep ringing above it; then the top
+// strings run in hammer-ons and pull-offs.
+function andaluza() {
+  const song = make('Andaluza', 92, 3, 3, 21, { preset: 'nylon', picking: 3, strum: 22 }, { ...space('hall'), vol: 0.7 });
+  const Am = [-1, 0, 2, 2, 1, 0], G = [3, 2, 0, 0, 0, 3], F = [1, 3, 3, 2, 0, 0], E = [0, 2, 2, 1, 0, 0];
+  // the bass and four strings on the first beat, three strings after it
+  const strummed = (n, c) => {
+    const o = n * 9;
+    shape(song, o, c, '', 2);
+    put(song, o, lowest(c), c[lowest(c)], n % 16 === 0 ? '>' : '');
+    for (const st of [3, 5, 6, 7, 8]) shape(song, o + st, c, '', 3);
   };
-  const chords = ['E', 'E', 'E', 'E', 'A', 'A', 'E', 'E', 'B', 'A', 'E', 'E'];
-  chords.forEach((c, bar) => boogie(bar, c, bar === 3 || bar === 7 ? [0, 1] : bar === 11 ? [0, 1] : [0, 1, 2, 3]));
-  // [step, string, fret, flags]
-  const licks = {
-    3: [[6, 4, 3, 'b'], [8, 4, 0], [9, 3, 0], [10, 3, 2, 'h'], [11, 2, 2]],
-    7: [[6, 4, 15, 'b'], [8, 5, 12], [9, 4, 12], [11, 3, 14, 'v']],
-    11: [[6, 1, 2, '>'], [6, 2, 1], [6, 3, 2], [6, 4, 0], [6, 5, 2]],
-  };
-  for (const [bar, notes] of Object.entries(licks)) for (const [st, s, f, t] of notes) put(song, +bar * 12 + st, s, f, t || '');
-  shape(song, 12 * 12, [0, 2, 0, 1, 3, 0]);
-  put(song, 12 * 12, 0, 0, '>');
-  put(song, 12 * 12 + 6, 5, 12, '*');
-  return song;
-}
-
-// Drop D: one-finger power chords, palm-muted sixteenth chugs, dead-note scratches and
-// sliding chords; harmonics through the delay, no reverb.
-function dropD() {
-  const song = make('Drop D Thunder', 100, 4, 4, 12, { preset: 'steel', picking: 0, pickHard: 0.85, fingerNoise: 0.45 }, { ...space('none'), dlyOn: true, dlyTime: '8d', dlyMix: 0.12, dlyFb: 0.3 });
-  song.tuning = [...TUNINGS['Drop D']];
-  const pow = (bar, st, f, t = '') => { for (const s of [0, 1, 2]) put(song, bar * 16 + st, s, f, s === 0 && t === '>' ? '>' : t === '>' ? '' : t); };
-  const chug = (bar, st) => put(song, bar * 16 + st, 0, 0, 'm');
-  const dead = (bar, st) => { for (const s of [0, 1, 2]) put(song, bar * 16 + st, s, 'x'); };
-  const A = (bar, scratch) => {
-    pow(bar, 0, 0, '>'); chug(bar, 2); chug(bar, 3); dead(bar, 4); chug(bar, 5);
-    pow(bar, 6, 3, '>'); chug(bar, 8); chug(bar, 9); pow(bar, 10, 5);
-    if (scratch) for (const st of [12, 13, 14, 15]) dead(bar, st);
-    else { chug(bar, 12); dead(bar, 13); pow(bar, 14, 3); }
-  };
-  const B = (bar) => {
-    pow(bar, 0, 0, '>'); chug(bar, 2); chug(bar, 3); pow(bar, 4, 5, '>'); pow(bar, 6, 7, 's');
-    pow(bar, 8, 10, 's'); pow(bar, 12, 8, 's'); pow(bar, 14, 7, 's');
-    for (const s of [0, 1, 2]) put(song, bar * 16 + 15, s, '.');
-  };
-  [[0, 0, 12], [4, 1, 12], [8, 2, 12], [12, 3, 12]].forEach(([st, s, f]) => put(song, st, s, f, '*'));
-  [[0, 0, 7], [4, 1, 7], [8, 2, 7], [12, 0, 5]].forEach(([st, s, f]) => put(song, 16 + st, s, f, '*'));
-  A(2); A(3, true); B(4); A(5); A(6); A(7, true); B(8); A(9); B(10);
-  pow(11, 0, 0, '>');
-  for (const s of [0, 1, 2]) put(song, 11 * 16 + 8, s, 12, '*');
-  return song;
-}
-
-// DADGAD, long nails: natural harmonics at the 12th, 7th and 5th frets ring like bells
-// through a long delay and a cathedral; between them, hammer-ons and slides over open drones.
-function bellTower() {
-  const song = make('Bell Tower', 78, 2, 3, 13, { preset: 'steel', picking: 3 }, { ...space('cathedral'), dlyOn: true, dlyTime: '8d', dlyMix: 0.16, dlyFb: 0.4, vol: 1 });
-  song.tuning = [...TUNINGS.DADGAD];
-  // [step, string, fret] per bar, all harmonics
-  const bells = [
-    [[0, 5, 12], [2, 4, 12], [4, 3, 12]], [[0, 5, 7], [2, 4, 7], [4, 2, 12]],
-    [[0, 3, 7], [2, 5, 5], [4, 4, 5]], [[0, 0, 12], [1, 1, 12], [2, 2, 7], [4, 3, 5]],
-  ];
-  const bells2 = [
-    [[0, 5, 5], [2, 3, 5], [4, 4, 7]], [[0, 5, 12], [2, 4, 12], [4, 3, 12]],
-    [[0, 2, 7], [2, 1, 12], [4, 0, 12]], [[0, 1, 7], [2, 0, 7], [4, 0, 5]],
-  ];
-  const ring = (bars, at) => bars.forEach((bar, i) => { for (const [st, s, f] of bar) put(song, (at + i) * 6 + st, s, f, '*'); });
-  ring(bells, 0);
-  // [step, string, fret, flags]
+  [Am, G, F, E].forEach((c, i) => { strummed(i, c); strummed(16 + i, c); });
+  // the thumb's tune, three notes a bar: [string, fret]
   const tune = [
-    [[0, 0, 0, '>'], [0, 1, 0], [0, 2, 0], [0, 3, 0], [0, 4, 0], [0, 5, 0], [2, 5, 2, 'h'], [3, 5, 4, 'h'], [4, 5, 2, 'h'], [5, 5, 0, 'h']],
-    [[0, 0, 0], [0, 4, 2], [0, 5, 5], [2, 5, 7, 's'], [4, 5, 5, 's']],
-    [[0, 0, 0], [0, 3, 0], [0, 4, 0], [2, 4, 2], [4, 4, 4, 'h'], [5, 4, 5, 'h']],
-    [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 5, 7, 'v']],
+    [[1, 0], [1, 3], [2, 2]], [[3, 2], [2, 2], [1, 3]], [[0, 3], [1, 2], [2, 0]], [[3, 0], [2, 0], [1, 2]],
+    [[0, 1], [1, 0], [1, 3]], [[2, 3], [1, 3], [1, 0]], [[0, 0], [0, 4], [1, 2]], [[2, 2], [2, 0], [1, 2]],
   ];
-  tune.forEach((bar, i) => { for (const [st, s, f, t] of bar) put(song, (4 + i) * 6 + st, s, f, t || ''); });
-  ring(bells2, 8);
-  shape(song, 12 * 6, [12, 12, 12, 12, 12, 12], '*');
+  tune.forEach((notes, i) => notes.forEach(([s, f], beat) => {
+    const o = (4 + i) * 9 + beat * 3;
+    put(song, o, s, f, beat === 0 && i === 0 ? '>' : '');
+    put(song, o + 1, 5, 0);
+    put(song, o + 2, 4, 0);
+  }));
+  bar(song, 12, [[0, 1, 0], [0, 5, 0], [1, 5, 1, 'h'], [2, 5, 3, 'h'], [3, 5, 5, 'h'], [4, 5, 3, 'h'], [5, 5, 1, 'h'], [6, 5, 0, 'h'], [7, 4, 1], [8, 4, 0, 'h']]);
+  bar(song, 13, [[0, 0, 3], [0, 4, 3], [1, 5, 0], [2, 5, 1, 'h'], [3, 5, 3, 'h'], [4, 5, 1, 'h'], [5, 5, 0, 'h'], [6, 4, 3], [8, 4, 0]]);
+  bar(song, 14, [[0, 0, 1], [0, 4, 1], [1, 4, 3, 'h'], [2, 5, 0], [3, 5, 1, 'h'], [4, 5, 0, 'h'], [5, 4, 3], [6, 4, 1, 'h'], [8, 3, 2]]);
+  bar(song, 15, [[0, 0, 0], [0, 3, 1], [1, 3, 2, 'h'], [2, 4, 0], [3, 4, 1, 'h'], [4, 4, 0, 'h'], [5, 3, 2], [6, 3, 1, 'h'], [8, 2, 2, 'v']]);
+  shape(song, 20 * 9, E);
+  bar(song, 20, [[6, 0, 12, '*'], [7, 4, 12, '*'], [8, 5, 12, '*']]);
   return song;
 }
 
-// Travis picking with a capo: the thumb alternates between two palm-muted bass strings, the
-// fingers play between its beats. The second half moves up the neck in barre shapes.
-function porchSwing() {
-  const song = make('Porch Swing', 104, 2, 4, 14, { preset: 'steel', picking: 1 }, { ...space('stage'), vol: 1 });
-  song.capo = 3;
-  // root, alternate bass, two inner fingers and the top: [string, fret]
-  const C = [[1, 3], [2, 2], [3, 0], [4, 1], [5, 0]], Am = [[1, 0], [2, 2], [3, 2], [4, 1], [5, 0]];
-  const F = [[0, 1], [2, 3], [3, 2], [4, 1], [5, 1]], G = [[0, 3], [2, 0], [3, 0], [4, 0], [5, 3]];
-  const E7 = [[0, 0], [2, 2], [3, 1], [4, 3], [5, 0]];
-  const C8 = [[0, 8], [2, 10], [3, 9], [4, 8], [5, 8]], Am5 = [[0, 5], [2, 7], [3, 5], [4, 5], [5, 5]];
-  const G3 = [[0, 3], [2, 5], [3, 4], [4, 3], [5, 3]];
-  const bars = [C, Am, F, G, C, E7, F, G, C8, Am5, F, G3];
-  bars.forEach(([r, a, f1, f2, top], i) => {
-    const o = i * 8, sync = i >= 4 && i < 8;
-    put(song, o, r[0], r[1], 'm'); put(song, o, top[0], top[1], i % 4 === 0 ? '>' : '');
-    put(song, o + 1, ...f2);
-    put(song, o + 2, a[0], a[1], 'm');
-    put(song, o + 3, ...f1);
-    put(song, o + 4, r[0], r[1], 'm');
-    if (sync) put(song, o + 5, ...top); else put(song, o + 5, ...f2);
-    put(song, o + 6, a[0], a[1], 'm');
-    put(song, o + 7, ...f1);
+// Drop D, a pick, two in a bar: the shanty over palm-muted bass notes, then with one-finger
+// power chords, dead-note scratches and a galloping bass. Dry, with a short echo.
+function drunkenSailor() {
+  const song = make('Drunken Sailor (trad.)', 104, 4, 2, 36, { preset: 'steel', picking: 0, pickHard: 0.85, fingerNoise: 0.4 }, { ...space('none'), dlyOn: true, dlyTime: '16', dlyMix: 0.1, dlyFb: 0.15 });
+  song.tuning = [...TUNINGS['Drop D']];
+  // the tune: [string, fret] of B3, E3, G3, A3, D3, F#3, C#4, D4, E4
+  const B = [4, 0], E = [2, 2], G = [3, 0], A = [3, 2], D = [2, 0], Fs = [2, 4], Cs = [4, 2], D4 = [4, 3], E4 = [5, 0];
+  const run = (n) => [0, 2, 3, 4, 6, 7].map((st) => [st, n]), four = (...ns) => ns.map((n, k) => [2 * k, n]);
+  const verse = [run(B), four(B, E, G, B), run(A), four(A, D, Fs, A), run(B), four(B, Cs, D4, E4), four(D4, B, A, Fs), [[0, E], [4, E]]];
+  const shout = (n) => [[0, n], [4, n], [7, n]];
+  const chorus = [shout(B), four(B, E, G, B), shout(A), four(A, D, Fs, A), shout(B), four(B, Cs, D4, E4), four(D4, B, A, Fs), [[0, E], [4, E]]];
+  const roots = [2, 2, 0, 0, 2, 2, 0, 2]; // fret of the power chord of each bar: E or D
+  const power = (step, f, t = '') => { for (const s of [0, 1, 2]) put(song, step, s, f, s === 0 ? t : ''); };
+  const scratch = (step) => { for (const s of [0, 1, 2]) put(song, step, s, 'x'); };
+  const tune = (at, bars) => bars.forEach((notes, i) => { for (const [st, [s, f]] of notes) put(song, (at + i) * 8 + st, s, f); });
+  // intro: the riff alone
+  for (const n of [0, 1]) {
+    power(n * 8, 2, '>');
+    for (const st of [2, 3, 4, 7]) put(song, n * 8 + st, 0, 2, 'm');
+    scratch(n * 8 + 6);
+  }
+  // first verse: a palm-muted root on every beat; second verse: a galloping one
+  tune(2, verse);
+  tune(18, verse);
+  roots.forEach((f, i) => {
+    if (i === 7) { for (const at of [2, 18]) for (const st of [0, 4]) power((at + i) * 8 + st, f, st ? '' : '>'); return; }
+    for (const st of [0, 4]) put(song, (2 + i) * 8 + st, 0, f, 'm');
+    for (const st of [0, 2, 3, 4, 6, 7]) put(song, (18 + i) * 8 + st, 0, f, 'm');
   });
-  shape(song, 12 * 8, [-1, 3, 2, 0, 1, 0]);
-  put(song, 12 * 8, 1, 3, '>');
-  for (const [k, s] of [[0, 3], [2, 4], [4, 5]]) put(song, 13 * 8 + k, s, 12, '*');
+  // the chorus, twice: power chords under the tune
+  for (const at of [10, 26]) {
+    tune(at, chorus);
+    roots.forEach((f, i) => {
+      const o = (at + i) * 8;
+      power(o, f, '>');
+      if (i % 2 === 0 || i === 7) power(o + 4, f);
+      if (i % 2 === 0 && i < 6) scratch(o + 6);
+    });
+  }
+  // ending: up the neck and back
+  power(34 * 8, 2, '>');
+  for (const s of [0, 1, 2]) put(song, 34 * 8 + 4, s, 14, 's');
+  power(35 * 8, 2, '>');
+  for (const s of [0, 1, 2]) put(song, 35 * 8 + 6, s, '.');
   return song;
 }
 
+// Half a step down, long nails close to the bridge, like a koto. The tune first low over
+// open bass strings, then an octave up in fifth position with slides, a bend and vibrato.
+function sakura() {
+  const song = make('Sakura (trad.)', 66, 2, 4, 16, { preset: 'steel', picking: 3, pickPos: 0.1 }, { ...space('church'), dlyOn: true, dlyTime: '4', dlyMix: 0.12, dlyFb: 0.3, vol: 1 });
+  song.tuning = [...TUNINGS['Half step down']];
+  bar(song, 0, [[0, 1, 12, '*'], [2, 5, 12, '*'], [4, 1, 7, '*'], [6, 5, 7, '*']]);
+  const low = [
+    [[0, 1, 0, '>'], [0, 3, 2], [2, 3, 2], [4, 4, 0]],
+    [[0, 1, 0], [0, 3, 2], [2, 3, 2], [4, 4, 0]],
+    [[0, 1, 0], [0, 3, 2], [2, 4, 0], [4, 4, 1], [6, 4, 0]],
+    [[0, 1, 0], [0, 3, 2], [2, 4, 0], [3, 3, 2], [4, 2, 3, 'v']],
+    [[0, 0, 0], [0, 2, 2], [2, 1, 3], [4, 2, 2], [6, 2, 3]],
+    [[0, 0, 0], [0, 2, 2], [2, 2, 2], [3, 1, 3], [4, 1, 2, 'v']],
+  ];
+  const high = [
+    [[0, 1, 0, '>'], [0, 5, 5], [2, 5, 7, 's'], [4, 5, 8], [6, 5, 7]],
+    [[0, 1, 0], [0, 5, 5], [2, 5, 7], [3, 5, 5, 'h'], [4, 4, 6, 'v']],
+    [[0, 0, 0], [0, 4, 5], [2, 3, 5], [4, 4, 5], [6, 4, 6]],
+    [[0, 0, 0], [0, 4, 5], [2, 4, 5], [3, 3, 5], [4, 3, 4, 'v']],
+    [[0, 1, 0], [0, 5, 5], [2, 5, 5], [4, 5, 5, 'b']],
+    [[0, 1, 0], [0, 5, 5], [2, 5, 5], [4, 5, 7, 'sv']],
+    [[0, 0, 0], [0, 4, 5], [2, 4, 6], [4, 5, 7], [5, 5, 5, 'h'], [6, 4, 6]],
+    [[0, 0, 0, '>'], [0, 4, 5, 'v']],
+  ];
+  low.forEach((notes, i) => bar(song, 1 + i, notes));
+  high.forEach((notes, i) => bar(song, 7 + i, notes));
+  bar(song, 15, [[0, 1, 12, '*'], [2, 4, 12, '*'], [4, 5, 12, '*'], [6, 5, 7, '*']]);
+  return song;
+}
+
+// 12-string with a capo, a pick, two beats of three: broken chords with a suspended note
+// that resolves in the middle of the bar. The last time round every bar starts with a strum.
+function glassHarbour() {
+  const song = make('Glass Harbour', 72, 3, 2, 25, { preset: 'twelve', picking: 0 }, { ...space('studio'), dlyOn: true, dlyTime: '8', dlyMix: 0.1, dlyFb: 0.25, vol: 0.9 });
+  song.capo = 2;
+  const D = [-1, -1, 0, 2, 3, 2], Ds4 = [-1, -1, 0, 2, 3, 3], Ds2 = [-1, -1, 0, 2, 3, 0], C9 = [-1, 3, 2, 0, 3, 0], GB = [-1, 2, 0, 0, 3, 3];
+  const G = [3, 2, 0, 0, 3, 3], Em = [0, 2, 2, 0, 3, 3], As = [-1, 0, 2, 0, 3, 3], A = [-1, 0, 2, 2, 2, 0];
+  const first = [[D], [Ds4, D], [C9], [GB], [D], [Ds2, D], [C9], [G]];
+  const second = [[Em], [G], [D], [As, A], [Em], [G], [As], [A]];
+  const broken = (n, [a, b = a], strum) => {
+    const o = n * 6;
+    if (strum) shape(song, o, a);
+    put(song, o, lowest(a), a[lowest(a)], n % 4 === 0 ? '>' : '');
+    [[1, 4, a], [2, 5, a], [3, 3, b], [4, 5, b], [5, 4, b]].forEach(([st, s, c]) => put(song, o + st, s, c[s]));
+  };
+  first.forEach((c, i) => { broken(i, c, false); broken(16 + i, c, true); });
+  second.forEach((c, i) => broken(8 + i, c, i === 0));
+  shape(song, 24 * 6, [-1, 0, 0, 2, 3, 2]);
+  put(song, 24 * 6, 1, 0, '>');
+  bar(song, 24, [[3, 2, 7, '*'], [4, 3, 7, '*'], [5, 4, 7, '*']]);
+  return song;
+}
+
+// Open G, hybrid picking, a slow twelve bars in swung triplets. The pick keeps a palm-muted
+// bass going; the fingers slide three strings into the chords at the 12th, 5th and 7th fret
+// like a bottleneck, bend, shake and chop.
+function lowlandBlues() {
+  const song = make('Lowland Blues', 72, 3, 4, 13, { preset: 'steel', picking: 4, pickHard: 0.7, fingerNoise: 0.4 }, { ...space('room'), vol: 1 });
+  song.tuning = [...TUNINGS['Open G']];
+  // the bass of each bar: [string, fret]
+  const Gb = [1, 0], Cb = [1, 5], Db = [0, 0];
+  [Gb, Gb, Gb, Gb, Cb, Cb, Gb, Gb, Db, Cb, Gb].forEach(([s, f], i) => { for (const st of [0, 3, 6, 9]) put(song, i * 12 + st, s, f, 'm'); });
+  const slideIn = (f) => [3, 4, 5].map((s) => [0, s, f, 's']);
+  const licks = [
+    [[2, 3, 3], [3, 3, 4, 'h'], [5, 5, 0], [6, 5, 3, 'v'], [9, 4, 0], [11, 4, 10], [11, 5, 10]],
+    [[0, 4, 12, 's'], [0, 5, 12, 's'], [6, 4, 12], [6, 5, 12, 'v'], [9, 5, 10], [11, 5, 12, 'h']],
+    [[0, 5, 12, '>'], [2, 5, 10, 'h'], [3, 4, 12], [5, 3, 12], [6, 3, 10, 'v'], [9, 3, 12], [11, 4, 12]],
+    [[0, 5, 12, '>'], [2, 5, 10], [3, 5, 8, 'h'], [5, 5, 5, 's'], [6, 5, 3, 'v'], [9, 5, 0], [11, 3, 3], [11, 4, 3], [11, 5, 3]],
+    [...slideIn(5), [6, 4, 5], [6, 5, 5], [8, 5, 8], [9, 5, 5, 'h']],
+    [[0, 5, 8, 'b'], [6, 5, 5], [8, 4, 5], [9, 3, 5], [11, 3, 3]],
+    [[0, 3, 4, 'h'], [2, 4, 0], [3, 5, 0], [5, 5, 3], [6, 5, 5, 'v']],
+    [[0, 5, 3], [2, 5, 0, 'h'], [3, 4, 3], [5, 4, 0, 'h'], [6, 3, 0], [9, 3, 'x'], [9, 4, 'x'], [11, 3, 5], [11, 4, 5], [11, 5, 5]],
+    [...slideIn(7), [6, 4, 7], [6, 5, 7], [9, 5, 10, 'v']],
+    [...slideIn(5), [6, 5, 8], [8, 5, 5, 'h'], [9, 4, 5], [11, 3, 3]],
+    [[0, 3, 4, 'h'], [3, 3, 0], [3, 5, 3], [6, 3, 0], [6, 5, 2], [9, 3, 0], [9, 5, 1]],
+    [[0, 1, 0, 'm'], [0, 3, 0], [0, 5, 0], [3, 1, 0, 'm'], [6, 0, 0, '>'], [6, 2, 0], [6, 3, 2], [6, 4, 1], [6, 5, 4], [9, 3, 'x'], [9, 4, 'x'], [11, 2, '.'], [11, 3, '.'], [11, 4, '.'], [11, 5, '.']],
+  ];
+  licks.forEach((notes, i) => bar(song, i, notes));
+  shape(song, 12 * 12, [0, 0, 0, 0, 0, 0]);
+  put(song, 12 * 12, 0, 0, '>');
+  bar(song, 12, [[6, 3, 12, '*'], [7, 4, 12, '*'], [8, 5, 12, '*']]);
+  return song;
+}
+
+// DADGAD, bare fingers: a slow air on the top two strings in hammer-ons, pull-offs and
+// slides over open bass strings; between its two rounds, harmonics at the 12th and 7th fret.
+function standingStones() {
+  const song = make('Standing Stones', 84, 2, 4, 19, { preset: 'steel', picking: 1 }, { ...space('cathedral'), dlyOn: true, dlyTime: '8d', dlyMix: 0.14, dlyFb: 0.35, vol: 1 });
+  song.tuning = [...TUNINGS.DADGAD];
+  const air = [
+    [[0, 5, 0], [2, 5, 2, 'h'], [3, 5, 4, 'h'], [4, 5, 7, 's'], [6, 5, 4], [7, 5, 2, 'h']],
+    [[0, 5, 0, 'h'], [2, 4, 2], [3, 4, 0, 'h'], [5, 4, 2, 'h'], [6, 5, 0]],
+    [[0, 5, 2], [2, 5, 4, 'h'], [3, 5, 7, 's'], [5, 5, 9, 'h'], [6, 5, 7, 'h']],
+    [[0, 5, 4, 's'], [2, 5, 2, 'h'], [3, 5, 0, 'h'], [6, 3, 12, '*']],
+    [[0, 5, 7], [2, 5, 9, 'h'], [3, 5, 12, 'sv'], [5, 5, 9], [6, 5, 7, 'h']],
+    [[0, 5, 4], [2, 5, 7, 's'], [3, 5, 4, 's'], [4, 5, 2, 'h'], [6, 5, 0, 'h']],
+    [[0, 4, 2], [2, 5, 0], [3, 5, 2, 'h'], [5, 5, 4, 'h'], [6, 5, 2, 'h']],
+  ];
+  const round = (at) => {
+    air.forEach((notes, i) => {
+      bar(song, at + i, notes);
+      // the open bass strings: A under the fifth bar, D under the others
+      put(song, (at + i) * 8, i === 4 ? 1 : 0, 0, i === 0 ? '>' : '');
+      put(song, (at + i) * 8 + 4, 2, 0);
+    });
+    shape(song, (at + 7) * 8, [0, 0, 0, 0, 0, 0]);
+    put(song, (at + 7) * 8, 0, 0, '>');
+    bar(song, at + 7, [[4, 3, 12, '*'], [5, 4, 12, '*'], [6, 5, 12, '*']]);
+  };
+  round(0);
+  bar(song, 8, [2, 3, 4, 5].map((s, k) => [2 * k, s, 12, '*']));
+  bar(song, 9, [2, 3, 4, 5].map((s, k) => [2 * k, s, 7, '*']));
+  round(10);
+  shape(song, 18 * 8, [12, 12, 12, 12, 12, 12], '*');
+  put(song, 18 * 8 + 4, 5, 7, '*');
+  return song;
+}
+
+// name, what it shows (for the menu), and the song
 export const DEMOS = [
-  { name: 'First Light — fingerstyle steel', make: firstLight },
-  { name: 'Romance — classical nylon', make: romance },
-  { name: 'Campfire — 12-string strumming', make: campfire },
-  { name: 'Night Drive — palm mutes, harmonics', make: nightDrive },
-  { name: 'Greensleeves — nylon, short nails, concert hall', make: greensleeves },
-  { name: 'Amazing Grace — open G, slides, vibrato', make: amazingGrace },
-  { name: 'The Irish Washerwoman — 6/8 jig, flatpicking', make: washerwoman },
-  { name: 'The House of the Rising Sun — 12-string arpeggios', make: risingSun },
-  { name: 'Für Elise — long nails, pull-offs', make: furElise },
-  { name: 'Canon in D — capo, cathedral, delay', make: canon },
-  { name: 'When the Saints — hybrid picking, dead notes, swing', make: saints },
-  { name: 'Delta Shuffle — bends, boogie, half step down', make: deltaShuffle },
-  { name: 'Drop D Thunder — chugs, sliding power chords', make: dropD },
-  { name: 'Bell Tower — DADGAD harmonics', make: bellTower },
-  { name: 'Porch Swing — Travis picking, capo, shifts', make: porchSwing },
+  { name: 'Daybreak', about: 'Steel-string fingerstyle: hammer-ons, slides, harmonics', make: daybreak },
+  { name: 'Andaluza', about: 'Nylon, long nails: strums, thumb melody, runs', make: andaluza },
+  { name: 'Drunken Sailor', about: 'Drop D: palm mutes, power chords, scratches', make: drunkenSailor },
+  { name: 'Sakura', about: 'Like a koto: bends, vibrato, half a step down', make: sakura },
+  { name: 'Glass Harbour', about: '12-string with a capo: broken chords in 6/8', make: glassHarbour },
+  { name: 'Lowland Blues', about: 'Open G, pick and fingers: slides, bends, swing', make: lowlandBlues },
+  { name: 'Standing Stones', about: 'DADGAD in a cathedral: an air and its harmonics', make: standingStones },
 ];

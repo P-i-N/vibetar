@@ -56,6 +56,6 @@ test('finger noise comes with hand moves, section starts and pauses, not in runn
     total += n;
     if (n) demos++;
   }
-  assert.ok(demos >= 10, `finger noise in ${demos} demos`);
+  assert.ok(demos >= songs.length - 2, `finger noise in ${demos} of ${songs.length} demos`);
   assert.ok(placed / total >= 0.6, `${placed} of ${total} squeaks at a bar start or after a pause`);
 });
