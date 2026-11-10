@@ -213,3 +213,61 @@ test('a note stopped by a barre is darker and shorter than one under a fingertip
   for (const [x, br] of [[f, false], [g, true]]) x.post({ type: 'n', t: 0.01, s: 3, f: midiHz(OPEN[3] + 5), v: 0.8, k: '', fr: true, d: 1, br });
   assert.ok(centroid(render(g, 1), 0.3, 0.5) < 0.95 * centroid(render(f, 1), 0.3, 0.5));
 });
+
+// ---- hammer-ons and pull-offs ---------------------------------------------------
+// A note on string s at fret a (velocity v0), then a hammer-on or pull-off to fret b at t1.
+function legatoNote(s, a, b, { v0 = 0.8, v1 = 0.8, t1 = 0.3 } = {}) {
+  const e = engine({ fingerNoise: 0 });
+  e.post({ type: 'n', t: 0.01, s, f: midiHz(OPEN[s] + a), v: v0, k: '', fr: a > 0, d: 1 });
+  e.post({ type: 'n', t: t1, s, f: midiHz(OPEN[s] + b), v: v1, k: 'h', fr: b > 0, d: 1 });
+  return e;
+}
+const energyOf = (b) => { let x = 0; for (let i = 0; i < b.length; i++) x += b[i] * b[i]; return x; };
+// share of the energy of partials 1-6 that is in the fundamental, 30-130 ms after t
+function fundamentalShare(x, f, t) {
+  const n = 4096, m = spectrum(x, Math.floor((t + 0.03) * FS), n);
+  const p = [1, 2, 3, 4, 5, 6].map((k) => peakNear(m, n, k * f).mag ** 2);
+  return p[0] / p.reduce((a, c) => a + c);
+}
+
+test('a hammer-on or pull-off changes the pitch at once: no glide', () => {
+  for (const [a, b] of [[3, 5], [5, 3], [2, 0]]) {
+    const e = legatoNote(1, a, b);
+    render(e, 0.3 + 128 / FS);
+    const v = e.voices[1];
+    const ref = engine({ fingerNoise: 0 });
+    ref.post({ type: 'n', t: 0.01, s: 1, f: midiHz(OPEN[1] + b), v: 0.8, k: '', fr: b > 0, d: 1 });
+    render(ref, 0.02);
+    assert.equal(v.gFrom, 0, `${a}->${b}: pitch glide`);
+    assert.ok(Math.abs(v.dV - ref.voices[1].tV) < 1e-6 && v.dVinc === 0, `${a}->${b}: delay ${v.dV} vs ${ref.voices[1].tV}`);
+  }
+});
+
+test('a hammer-on strikes the string at the fret: heard like a soft note, thin in the fundamental', () => {
+  for (const s of [1, 4]) {
+    const f = midiHz(OPEN[s] + 5);
+    const x = render(legatoNote(s, 3, 5, { v0: 0.02 }), 0.8), picked = note(s, 5, {}, {}, 0.6);
+    const lv = db(rms(x, 0.33, 0.53)) - db(rms(picked, 0.04, 0.24));
+    assert.ok(lv > -14 && lv < -3, `string ${s}: hammer-on ${lv.toFixed(1)} dB re a picked note`);
+    const share = fundamentalShare(x, f, 0.3), pickShare = fundamentalShare(picked, f, 0.01);
+    assert.ok(share < 0.75 * pickShare, `string ${s}: fundamental ${(100 * share).toFixed(0)} % vs ${(100 * pickShare).toFixed(0)} % for a pick`);
+  }
+  // on a ringing string it adds energy
+  const e = legatoNote(1, 3, 5), quiet = engine({ fingerNoise: 0 });
+  quiet.post({ type: 'n', t: 0.01, s: 1, f: midiHz(OPEN[1] + 3), v: 0.8, k: '', fr: true, d: 1 });
+  render(e, 0.34); render(quiet, 0.34);
+  assert.ok(energyOf(e.voices[1].bv) > 1.3 * energyOf(quiet.voices[1].bv));
+});
+
+test('a pull-off is a soft pluck by the fretting finger, mostly along the top', () => {
+  for (const s of [1, 4]) {
+    const e = legatoNote(s, 5, 2, { v0: 0.02 });
+    const x = render(e, 0.8), picked = note(s, 2, {}, {}, 0.6);
+    const lv = db(rms(x, 0.33, 0.53)) - db(rms(picked, 0.04, 0.24));
+    assert.ok(lv > -14 && lv < -2, `string ${s}: pull-off ${lv.toFixed(1)} dB re a picked note`);
+    const g = legatoNote(s, 5, 2, { v0: 0.02 });
+    render(g, 0.32);
+    const v = g.voices[s];
+    assert.ok(energyOf(v.bh) > energyOf(v.bv), `string ${s}: along ${energyOf(v.bh).toExponential(2)} vs towards ${energyOf(v.bv).toExponential(2)}`);
+  }
+});

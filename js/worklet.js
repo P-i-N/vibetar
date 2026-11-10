@@ -123,6 +123,8 @@ const PLUCKERS = [
   { name: 'long nails', k: 0.8, r: 0.4, widthMm: 2, relMs: 0.12, holdMs: 4, thetaDeg: 50, noise: 0.08, pos: 1.0, gain: 1 },
   { name: 'thumb', k: 0.25, r: 6, widthMm: 14, relMs: 0.9, holdMs: 5, thetaDeg: 45, noise: 0.02, pos: 1.4, gain: 1 },
 ];
+const HAMMER = 1.12;   // strength of a hammer-on blow, against a pluck at the same velocity
+const PULL_OFF = 0.94; // and of the flick of a pull-off
 const PUSH = 0.1;    // how quickly the hand corrects its speed to have the force ready on time
 // share of a string's broadband loss that is its own (the rest went to the bridge) when a modelled bridge is attached
 const OWN_LOSS = 0.7;
@@ -460,6 +462,44 @@ class PluckVoice {
     this.excV = Math.cos(th); this.excH = Math.sin(th);
   }
 
+  // The fretting finger sets the string going (fromF: the pitch before, up: a hammer-on).
+  // Hammer-on: the fingertip strikes the string onto the new fret. The blow pushes the string
+  // down next to that fret, about a fingertip from the new end: a displacement so close to an
+  // end gives the upper partials relatively more than the fundamental. Soft flesh makes the
+  // contact last about a millisecond; the motion is towards the top.
+  // Pull-off: the finger leaves the higher fret with a sideways flick and so plucks the longer
+  // string where it held it, 1 - f/fromF of the new length from its end. Flesh: round, and
+  // mostly along the top.
+  fretTap(f, fromF, vel, up, dir) {
+    const fs = this.fs, rnd = this.rnd, exc = this.exc;
+    // a soft contact of fixed length smooths the shorter periods of higher notes more
+    const N = fs / f, g = clamp(Math.pow(f / 260, 0.12), 0.8, 1.25) * (dir < 0 ? -1 : 1);
+    let L, wd, amp, th;
+    if (up) {
+      L = Math.max(1.5, (2 * 0.012 * fs) / this.waveSpeed());
+      wd = fs * 0.0008 * (1.3 - 0.6 * Math.min(1, vel));
+      amp = vel * HAMMER * g * Math.sqrt((0.15 * N) / L);
+      th = 0.25;
+    } else {
+      L = clamp(1 - f / fromF, 0.03, 0.5) * N;
+      wd = fs * (0.0012 + 0.001 * (1 - Math.min(1, vel)));
+      amp = vel * PULL_OFF * g;
+      th = 1.15;
+    }
+    th += 0.2 * (rnd() - 0.5);
+    wd *= 1 + 0.2 * (rnd() - 0.5);
+    const len = Math.min(Math.ceil(L + wd) + 1, exc.length);
+    for (let n = 0; n < len; n++) {
+      const a = n / wd;
+      const s1 = a >= 1 ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * a);
+      const b = (n - L) / wd;
+      const s2 = b <= 0 ? 0 : b >= 1 ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * b);
+      exc[n] = amp * (s1 - s2);
+    }
+    this.excPos = 0; this.excLen = len;
+    this.excV = Math.cos(th); this.excH = Math.sin(th);
+  }
+
   // ev.k: technique flags - m palm mute, h hammer-on/pull-off, s slide,
   // b bend, v vibrato, * natural harmonic (ev.hb = touch point, as the
   // fraction of the string between finger and bridge), x dead note; ev.br: stopped by a barre
@@ -494,13 +534,21 @@ class PluckVoice {
       else if (dead) this.touch(DEAD, N, 0.5, 0, 0);                  // fretting hand lying on the string
       else this.release(0);
     } else {
-      const from = 12 * Math.log2(this.curFreq / f);
+      const fromF = this.curFreq, from = 12 * Math.log2(fromF / f);
       this.bendAmt = 0; this.vibDepth = 0;
       this.freq = f;
-      this.gFrom = from; this.gT0 = t; this.gStep = slide;
-      this.gDur = slide ? clamp(0.035 * Math.abs(from), 0.07, 0.3) : 0.008;
-      this.tapExc(f, ev.v * (slide ? 0.1 : 0.4), P, 'soft', ev.d);
-      if (slide) this.squeak(this.gDur, clamp(Math.abs(from) / 7, 0.3, 1) * 0.8, P);
+      if (slide) {
+        // the finger glides along the string to the new fret
+        this.gFrom = from; this.gT0 = t; this.gStep = true;
+        this.gDur = clamp(0.035 * Math.abs(from), 0.07, 0.3);
+        this.tapExc(f, ev.v * 0.1, P, 'soft', ev.d);
+        this.squeak(this.gDur, clamp(Math.abs(from) / 7, 0.3, 1) * 0.8, P);
+      } else {
+        // a finger lands on or leaves a fret: the string is that length at once
+        this.gFrom = 0;
+        this.retune(f, true);
+        this.fretTap(f, fromF, ev.v, f > fromF, ev.d);
+      }
       if (pm) {
         this.retune(f, false);
         this.touch(PALM.map((x) => x * f / this.openF), N, PALM_K, 0.004, 0);
