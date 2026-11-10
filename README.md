@@ -18,7 +18,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Five picking techniques: pick, bare fingers, short nails, long nails, hybrid
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb with spaces from a small room to a cathedral, and tempo-synced ping-pong delay
-- MIDI file import (menu, or drop a `.mid` on the page): every track but the drums, quantised to the grid that fits, on frets chosen so the hand moves as little as possible ([js/midi.js](js/midi.js))
+- MIDI file import (menu, or drop a `.mid` on the page): every track but the drums, quantised to the grid that fits, on frets chosen so the hand moves as little as possible ([js/midi.js](js/midi.js)). The notes keep their pitch, laid out for standard tuning without a capo, or for the current song's tuning and capo
 - 15 demo songs ([js/demos.js](js/demos.js)): traditional tunes, Beethoven, Pachelbel and originals, which between them use every instrument, picking technique, technique mark, tuning, grid and reverb space
 - Share by link, WAV export, no account, no server
 

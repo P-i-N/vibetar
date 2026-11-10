@@ -33,7 +33,8 @@
       <div class="menuhead">Demos</div>
       <div id="demoList"></div>
       <div class="menusep"></div>
-      <button data-act="midi">Import MIDI file…</button>
+      <button data-act="midi" data-mode="standard" title="Lay the notes out for standard tuning without a capo">Import MIDI — standard tuning…</button>
+      <button data-act="midi" data-mode="current" title="Keep this song's tuning and capo and lay the notes out for them">Import MIDI — this tuning and capo…</button>
       <button data-act="wav">Export WAV</button>
       <button data-act="help">Keyboard shortcuts</button>
       <a href="https://github.com/P-i-N/vibetar" target="_blank" rel="noopener">Source on GitHub</a>
@@ -138,7 +139,7 @@
   </table>
   <p class="hint"><b>Picking</b> (Instrument panel) chooses what plucks the strings: a pick, bare fingertips, short or long nails, or pick and fingers together. With fingers the thumb takes the bass strings; accented notes are played as rest strokes.</p>
   <p class="hint">The guitar body is computed from its wood, bracing and air, with the strings and body feeding each other through the bridge; it takes a couple of seconds the first time an instrument is played. <b>String coupling</b> sets how strongly the strings feel the bridge and each other through it. 100 % is the value computed from the model; there, notes on the body's main resonance (around F♯3–G3) behave like the wolf notes of a real guitar.</p>
-  <p class="hint"><b>Import MIDI file</b> (menu, or drop a <code>.mid</code> file on the page) lays the notes out as a tab: every track but the drums, on the grid that fits the rhythm, on strings and frets that keep the hand moving as little as possible.</p>
+  <p class="hint"><b>Import MIDI file</b> (menu, or drop a <code>.mid</code> file on the page) lays the notes out as a tab: every track but the drums, on the grid that fits the rhythm, on strings and frets that keep the hand moving as little as possible. The notes keep their pitch: <i>standard tuning</i> lays them out for EADGBE without a capo (as a dropped file does), <i>this tuning and capo</i> for the ones the current song uses. Notes below the lowest string come up an octave.</p>
   <p class="hint">Techniques combine: a palm-muted note can also be accented, hammered or bent.</p>
   <p class="hint">Notes ring until the same string is played again or stopped with <kbd>.</kbd> — just like a real guitar. Notes in the same column are strummed. Your song lives in the page address: copy it any time to share.</p>
   <form method="dialog"><button class="btn primary">Got it</button></form>

@@ -133,3 +133,28 @@ test('an imported song plays and survives the link round trip', async () => {
   const evs = S.songEvents(song, 0, S.totalSteps(song), 0, Math.random);
   assert.equal(evs.filter((e) => e.type === 'n').length, 64);
 });
+
+test('a chord that only fits a stretched hand is imported (frets 0, 1 and 6)', () => {
+  const ev = [tempo(100), ...note(0, 40, 400), ...note(0, 46, 400), ...note(0, 70, 400)];
+  const { song } = midiToSong(parseMidi(smf([track(ev)])));
+  assert.deepEqual(cellsOf(song).map((c) => pitch(song, c)).sort((a, b) => a - b), [40, 46, 70]);
+});
+
+test('a file can be laid out for another tuning and a capo; the pitches stay', () => {
+  const keys = [38, 45, 50, 57, 62, 66, 69, 74];
+  const ev = [tempo(100)];
+  keys.forEach((k, i) => ev.push(...note(i * 480, k, 400)));
+  const m = parseMidi(smf([track(ev)]));
+  const played = (song) => cellsOf(song).filter((c) => typeof c.f === 'number').map((c) => pitch(song, c));
+  const DROP_D = [38, 45, 50, 55, 59, 64];
+  const std = midiToSong(m).song;
+  assert.deepEqual([std.tuning, std.capo], [[40, 45, 50, 55, 59, 64], 0]);
+  assert.deepEqual(played(std), [50, ...keys.slice(1)], 'the low D comes up an octave in standard tuning');
+  const drop = midiToSong(m, { tuning: DROP_D, capo: 0 }).song;
+  assert.deepEqual([drop.tuning, drop.capo], [DROP_D, 0]);
+  assert.deepEqual(played(drop), keys, 'in drop D it is played as written');
+  const capo = midiToSong(m, { tuning: DROP_D, capo: 2 }).song;
+  assert.equal(capo.capo, 2);
+  assert.deepEqual(played(capo), [50, ...keys.slice(1)], 'below the capo it comes up an octave');
+  assert.ok(cellsOf(capo).every((c) => typeof c.f !== 'number' || c.f <= 22), 'frets count from the capo');
+});

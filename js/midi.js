@@ -150,14 +150,17 @@ function playable(keys, open) {
   }
 }
 
-// midiToSong(midi, { title }) -> { song, dropped, truncated }
+// midiToSong(midi, { title, tuning, capo }) -> { song, dropped, truncated }
 // Every track except the drums (channel 10) is played. Tempo and time signature are the
-// file's first ones; onsets are quantised to the grid that fits them best.
+// file's first ones; onsets are quantised to the grid that fits them best. The notes keep
+// their pitch and are laid out for the tuning and capo given (standard, no capo, without).
 export function midiToSong(midi, opts = {}) {
   const tracks = midi.tracks.filter((t) => t.notes.some((n) => n.ch !== 9));
   const notes = tracks.flatMap((t) => t.notes.filter((n) => n.ch !== 9));
   if (!notes.length) throw new Error('the MIDI file has no notes to play');
   const song = newSong();
+  if (opts.tuning) song.tuning = [...opts.tuning];
+  song.capo = opts.capo || 0;
   const program = (tracks.find((t) => t.program >= 0) || { program: -1 }).program;
   song.inst = { ...INSTRUMENTS[program === 24 ? 'nylon' : 'steel'] };
   song.title = String(opts.title || midi.name || 'Imported').slice(0, 80);
