@@ -1,7 +1,7 @@
 # Plucking hand and modelled body — design
 
 Date: 2026-11-10
-Status: implemented (deviations are listed in the implementation report)
+Status: implemented — deviations are listed in `docs/superpowers/reports/2026-11-10-plucking-hand-and-body-report.md`
 
 ## Goal
 
