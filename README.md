@@ -18,6 +18,7 @@ Write a tab, press play, copy the page address to share it — the whole song (n
 - Five picking techniques: pick, bare fingers, short nails, long nails, hybrid
 - Tunings, capo, time signature and grid (8ths, 16ths, triplets)
 - Convolution reverb with spaces from a small room to a cathedral, and tempo-synced ping-pong delay
+- MIDI file import (menu, or drop a `.mid` on the page): every track but the drums, quantised to the grid that fits, on frets chosen so the hand moves as little as possible ([js/midi.js](js/midi.js))
 - Share by link, WAV export, no account, no server
 
 ## How the sound is made
@@ -63,7 +64,7 @@ python3 -m http.server 8765
 
 Then open http://localhost:8765/.
 
-The string engine, the body model and the song format have offline tests (Node 22+, no packages; about 40 s, most of it building bodies):
+The string engine, the body model, the song format and the MIDI import have offline tests (Node 22+, no packages; about 40 s, most of it building bodies):
 
 ```bash
 node --test test/

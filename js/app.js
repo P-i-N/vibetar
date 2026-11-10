@@ -2,6 +2,7 @@
 
 import { AudioEngine, renderSong, wavBlob } from './audio.js';
 import * as S from './song.js';
+import { parseMidi, midiToSong } from './midi.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -754,6 +755,19 @@ function bindInput() {
     else if (b.dataset.act === 'new') { await save(); setSong(S.newSong()); await save(true); toast('New song — the browser Back button brings the old one back'); }
     else if (b.dataset.act === 'help') $('help').showModal();
     else if (b.dataset.act === 'wav') exportWav();
+    else if (b.dataset.act === 'midi') $('midiFile').click();
+  });
+  $('midiFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) importMidi(f);
+  });
+  window.addEventListener('dragover', (e) => { if ([...e.dataTransfer.items].some((i) => i.kind === 'file')) e.preventDefault(); });
+  window.addEventListener('drop', (e) => {
+    const f = [...e.dataTransfer.files].find((x) => /\.midi?$/i.test(x.name));
+    if (!f) return;
+    e.preventDefault();
+    importMidi(f);
   });
 
   window.addEventListener('popstate', () => { if (!savePending) loadFromHash(); });
@@ -768,6 +782,20 @@ function bindInput() {
 function closeMenu() {
   $('menu').hidden = true;
   $('menuBtn').setAttribute('aria-expanded', 'false');
+}
+
+async function importMidi(file) {
+  try {
+    const { song: s, dropped, truncated } = midiToSong(parseMidi(await file.arrayBuffer()), { title: file.name.replace(/\.midi?$/i, '') });
+    await save();
+    setSong(s);
+    await save(true);
+    const notes = [truncated && `only the first ${S.MAX_BARS} bars`, dropped && `${dropped} note${dropped > 1 ? 's' : ''} left out (more than six at once)`].filter(Boolean);
+    toast(notes.length ? `Imported — ${notes.join(', ')}` : 'Imported — the browser Back button brings the old song back', 4000);
+  } catch (e) {
+    console.warn(e);
+    toast(`Could not import this file: ${e.message}`, 4000);
+  }
 }
 
 async function exportWav() {
