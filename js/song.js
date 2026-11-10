@@ -1,5 +1,7 @@
 // Song model, link (de)serialisation and playback compilation.
 
+import { planHand } from './hand.js';
+
 export const TUNINGS = {
   'Standard (EADGBE)': [40, 45, 50, 55, 59, 64],
   'Drop D': [38, 45, 50, 55, 59, 64],
@@ -254,85 +256,55 @@ export function cellEvent(song, s, cell, t, vel, d) {
   return { type: 'n', t, s, f: midiHz(open + cell.f), v: vel, k: k.replace('*', ''), fr: cell.f > 0, d };
 }
 
-// How many frets apart the fretted notes of two columns lie.
-function handSpan(a, b) {
-  let lo = 99, hi = 0;
-  for (const col of [a, b]) for (const c of col || []) {
-    if (c && typeof c.f === 'number' && c.f > 0 && !(c.t || '').includes('*')) { lo = Math.min(lo, c.f); hi = Math.max(hi, c.f); }
-  }
-  return hi - lo;
+// ---- the fretting hand ---------------------------------------------------------
+// What the fretting hand does around a column, from its plan (hand.js): fingers leave
+// strings (their notes stop); the hand moves to a new position, or re-grips after a pause or
+// at a section start, sometimes with a squeak on a wound string; a single-note line mutes
+// the string played before, with the palm or a spare finger, not always exactly in time.
+
+// the hand's plan for the song, made once per performance
+function handPlan(song, perf) {
+  if (!perf.hand) perf.hand = planHand(song.cols, { stepSecs: 60 / song.bpm / song.spb, spb: song.spb, bar: stepsPerBar(song), open: song.tuning.map((m) => m + song.capo) });
+  return perf.hand;
 }
 
-// Does the fretting finger have to travel along string s to reach this note?
-// Returns that movement (or null): the finger lets go of the old note, and
-// with some luck - more on wound strings and long jumps - it squeaks on the way.
-function fingerTravel(song, step, s, cell, tNote, stepDur, rnd) {
-  const wound = WOUND[song.inst.preset];
-  if (!wound || typeof cell.f !== 'number' || cell.f === 0) return null;
-  if (/[hs*]/.test(cell.t || '')) return null; // legato keeps the finger down; slides are voiced by the engine
-  const maxBack = Math.min(step, Math.ceil(1.6 / stepDur));
-  for (let i = 1; i <= maxBack; i++) {
-    const prev = getCell(song, step - i, s);
-    if (!prev) continue;
-    if (typeof prev.f !== 'number' || prev.f === 0 || (prev.t || '').includes('*')) return null;
-    const dist = Math.abs(cell.f - prev.f);
-    // within a hand's span another finger takes over; beyond it the whole hand moves
-    if (dist < 1 || handSpan(song.cols[step - i], song.cols[step]) < 4) return null;
-    const dur = Math.min(Math.max(0.07, 0.045 + 0.022 * dist), 0.22, 0.4 * i * stepDur);
-    const t = Math.max(0, tNote - dur - 0.012);
-    const amount = song.inst.fingerNoise || 0;
-    const chance = Math.min(0.9, 0.3 + 0.1 * dist) * Math.min(1, 0.4 + amount) * (s < wound ? 1 : 0.35);
-    const amt = amount > 0 && rnd() < chance ? Math.min(1, 0.35 + 0.1 * dist) * (0.6 + 0.4 * rnd()) : 0;
-    return { type: 'q', t, s, dur: Math.min(dur, Math.max(0.01, tNote - t)), amt };
-  }
-  return null;
-}
-
-// [string, fret] of the notes of a column that hold a finger down (not open strings or harmonics)
-function fretted(col) {
+// events for plan entry e; tNote: when the column's first note sounds; h: humanize
+function handEvents(song, e, tNote, rnd, h) {
   const out = [];
-  if (col) col.forEach((c, s) => { if (c && typeof c.f === 'number' && c.f > 0 && !(c.t || '').includes('*')) out.push([s, c.f]); });
-  return out;
-}
-
-// Fingers that leave a string without a note of their own on it, compared with the last
-// column that held fingers down: on a chord change a finger lifts off a wound string, on a
-// position shift it slides along one as the hand travels. Either can squeak; the notes ring on.
-// Returns one such noise (or null). tNote: when the column's first note sounds.
-function handMove(song, step, tNote, stepDur, rnd) {
-  const wound = WOUND[song.inst.preset], amount = song.inst.fingerNoise || 0;
-  const col = song.cols[step];
-  if (!wound || !(amount > 0)) return null;
-  if (col.some((c) => c && typeof c.f === 'number' && /[hs]/.test(c.t || ''))) return null; // legato: the hand stays
-  const now = fretted(col);
-  if (!now.length) return null;
-  const maxBack = Math.min(step, Math.ceil(1.6 / stepDur));
-  let prev = null, back = 0;
-  for (let i = 1; i <= maxBack && !prev; i++) { const p = fretted(song.cols[step - i]); if (p.length) { prev = p; back = i; } }
-  if (!prev) return null;
-  const at = new Map(now);
-  const leaving = prev.filter(([s, f]) => s < wound && at.get(s) !== f);
-  const frets = (x) => x.map(([, f]) => f);
-  const lo = (x) => Math.min(...frets(x));
-  const span = Math.max(...frets(prev), ...frets(now)) - Math.min(lo(prev), lo(now));
-  let s, dur, amt;
-  if (span >= 4) {
-    const dist = Math.max(1, Math.abs(lo(now) - lo(prev)));
-    const slid = leaving.length ? leaving : prev;
-    s = slid[(rnd() * slid.length) | 0][0];
-    const chance = Math.min(0.9, 0.3 + 0.1 * dist) * Math.min(1, 0.4 + amount) * (s < wound ? 1 : 0.35);
-    if (rnd() >= chance) return null;
-    dur = Math.min(Math.max(0.07, 0.045 + 0.022 * dist), 0.22);
-    amt = Math.min(1, 0.35 + 0.1 * dist) * (0.6 + 0.4 * rnd());
+  const wound = WOUND[song.inst.preset] || 0, amount = song.inst.fingerNoise || 0;
+  const likely = Math.min(1, 0.4 + amount);
+  const room = 0.4 * e.gap; // a finger does not leave before the note it held has been heard
+  // a finger travels along string s for dur seconds; nl: it did not hold the note on it
+  const travel = (s, dur, amt, nl) => {
+    dur = Math.min(dur, room);
+    const t = Math.max(0, tNote - dur - 0.012);
+    const ev = { type: 'q', t, s, dur: Math.min(dur, Math.max(0.01, tNote - t)), amt };
+    if (nl) ev.nl = true;
+    out.push(ev);
+  };
+  if (e.move) {
+    const m = e.move, d = m.travel;
+    // the finger in contact: one that stays on its string, else one that leaves, else one that arrives
+    const woundIn = (list) => list.find((s) => s < wound);
+    let s = woundIn(m.kept) ?? woundIn(m.held) ?? woundIn(m.next);
+    const plain = s == null;
+    if (plain) s = m.kept[0] ?? m.held[0] ?? m.next[0];
+    // fast passages move lightly; long gaps and section starts give the hand time to drag
+    let chance = d <= 2 ? 0.12 : Math.min(0.85, 0.3 + 0.08 * d);
+    if (e.gap < 0.2) chance *= 0.3; else if (e.gap >= 0.5) chance *= 1.4;
+    if (e.phrase) chance *= 1.4;
+    chance = Math.min(0.9, chance) * likely * (plain ? 0.35 : 1);
+    const dur = Math.min(Math.max(0.07, 0.045 + 0.022 * d), 0.22);
+    const amt = amount > 0 && rnd() < chance ? Math.min(1, (0.35 + 0.1 * d) * (m.barre ? 1.3 : 1)) * (0.6 + 0.4 * rnd()) : 0;
+    for (const x of e.lifts) travel(x, dur, x === s ? amt : 0, false);
+    if (amt > 0 && !e.lifts.includes(s)) travel(s, dur, amt, true);
   } else {
-    if (!leaving.length || rnd() >= 0.3 * Math.min(1, 0.4 + amount)) return null;
-    s = leaving[(rnd() * leaving.length) | 0][0];
-    dur = 0.03 + 0.02 * rnd();
-    amt = 0.25 + 0.2 * rnd();
+    for (const x of e.lifts) travel(x, 0.03, 0, false);
+    const s = e.regrip && e.regrip.find((x) => x < wound);
+    if (s != null && amount > 0 && rnd() < (e.phrase ? 0.4 : 0.3) * likely) travel(s, 0.04 + 0.03 * rnd(), 0.3 + 0.2 * rnd(), true);
   }
-  dur = Math.min(dur, 0.4 * back * stepDur);
-  const t = Math.max(0, tNote - dur - 0.012);
-  return { type: 'q', t, s, dur: Math.min(dur, Math.max(0.01, tNote - t)), amt, nl: true };
+  for (const x of e.mutes) if (rnd() >= 0.08 * h) out.push({ type: 'o', t: Math.max(0, tNote + (0.004 + 0.025 * rnd()) * (0.5 + h)), s: x });
+  return out;
 }
 
 // ---- the performer -----------------------------------------------------------
@@ -355,6 +327,7 @@ export function newPerformer(seed) {
     rnd: seed == null ? Math.random : mulberry32(seed),
     drift: { t: 0, v: 0, p: 0 },                       // seconds, relative loudness, millimetres
     last: { finger: 0, fingerT: [-9, -9, -9, -9, -9], pickT: -9, pickD: 1 },
+    hand: null,                                        // the fretting hand's plan (hand.js), made on first use
   };
 }
 
@@ -387,6 +360,7 @@ export function stepEvents(song, step, t, rnd, perf) {
   for (let s = 0; s < 6; s++) if (col[s]) strings.push(s);
   if (!strings.length) return [];
   if (!perf) perf = newPerformer();
+  const plan = handPlan(song, perf)[step];
   const { spb, inst } = song;
   const bar = spb * song.bpb;
   const stepDur = 60 / song.bpm / spb;
@@ -426,9 +400,8 @@ export function stepEvents(song, step, t, rnd, perf) {
     else if (!down) vel *= 0.93;
     const accent = (cell.t || '').includes('>');
     if (accent) vel = Math.min(1.15, vel * 1.3 + 0.08);
-    const q = fingerTravel(song, step, s, cell, tt, stepDur, rnd);
-    if (q) out.push(q);
     const ev = cellEvent(song, s, cell, tt, vel, down ? 1 : -1);
+    if (plan && plan.barre.includes(s)) ev.br = true; // stopped by the flat index finger
     // who plays it: 0 thumb, 1 index, 2 middle, 3 ring, 4 the pick
     let finger = 4;
     const fingers = technique >= 1 && technique <= 3 ? true : technique === 4 && s >= 3;
@@ -449,10 +422,7 @@ export function stepEvents(song, step, t, rnd, perf) {
     out.push(ev);
   });
   const first = out.reduce((m, e) => (e.type === 'n' && e.t < m ? e.t : m), Infinity);
-  if (first < Infinity && !out.some((e) => e.type === 'q')) {
-    const q = handMove(song, step, first, stepDur, rnd);
-    if (q) out.unshift(q);
-  }
+  if (first < Infinity) for (const ev of handEvents(song, plan, first, rnd, h)) out.push(ev);
   return out;
 }
 

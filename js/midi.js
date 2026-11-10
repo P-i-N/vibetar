@@ -1,6 +1,7 @@
 // Standard MIDI file import: parse the file, then lay its notes out as a tab.
 
 import { MAX_BARS, MAX_FRET, emptyCols, newSong, setCell, INSTRUMENTS } from './song.js';
+import { handPath } from './hand.js';
 
 // ---- parsing -------------------------------------------------------------------
 
@@ -149,45 +150,6 @@ function playable(keys, open) {
   }
 }
 
-// The fingering of each step (an index into its options) along the cheapest path of the
-// fretting hand. The hand sits at a position p (index finger at fret p) and covers frets
-// p..p+3, or p+4 with a stretch. Moving it costs; open strings leave it where it is.
-function handPath(layers, stepSecs) {
-  const states = [], cost = [], from = [];
-  layers.forEach((l, i) => {
-    const st = [];
-    l.options.forEach((o, j) => {
-      if (!o.lo) {
-        const ps = i ? [...new Set(states[i - 1].map((s) => s.p))] : [0];
-        for (const p of ps) st.push({ j, p, c: o.cost });
-        return;
-      }
-      for (let p = Math.max(1, o.hi - 4); p <= o.lo; p++) st.push({ j, p, c: o.cost + 0.02 * p + (o.hi - p > 3 ? 1.2 : 0) });
-    });
-    states.push(st);
-    if (!i) { cost.push(st.map((s) => s.c)); from.push(st.map(() => -1)); return; }
-    const prev = states[i - 1], pc = cost[i - 1];
-    // after a long rest the hand has time to move
-    const weight = (l.step - layers[i - 1].step) * stepSecs > 2 ? 0.3 : 1;
-    const c = [], f = [];
-    for (const s of st) {
-      let best = Infinity, arg = -1;
-      prev.forEach((q, k) => {
-        const d = s.p && q.p ? Math.abs(s.p - q.p) : 0;
-        const v = pc[k] + (d ? weight * (0.8 + 0.5 * d) : 0);
-        if (v < best) { best = v; arg = k; }
-      });
-      c.push(s.c + best); f.push(arg);
-    }
-    cost.push(c); from.push(f);
-  });
-  const pick = new Array(layers.length);
-  if (!layers.length) return pick;
-  let k = cost[layers.length - 1].indexOf(Math.min(...cost[layers.length - 1]));
-  for (let i = layers.length - 1; i >= 0; i--) { pick[i] = states[i][k].j; k = from[i][k]; }
-  return pick;
-}
-
 // midiToSong(midi, { title }) -> { song, dropped, truncated }
 // Every track except the drums (channel 10) is played. Tempo and time signature are the
 // file's first ones; onsets are quantised to the grid that fits them best.
@@ -234,7 +196,8 @@ export function midiToSong(midi, opts = {}) {
     dropped += new Set(all.map((n) => n.key)).size - (options.length ? keys.length : 0);
     return { step, keys, options, notes: all };
   }).filter((l) => l.options.length);
-  const pick = handPath(layers, 60 / song.bpm / song.spb);
+  // the fingering of each step along the cheapest path of the fretting hand
+  const pick = handPath(layers, 60 / song.bpm / song.spb).map((st) => st.j);
 
   // write the notes; loud notes are accents
   const vels = notes.map((n) => n.vel).sort((a, b) => a - b), median = vels[vels.length >> 1];

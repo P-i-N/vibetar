@@ -40,11 +40,22 @@ test('the demos show every instrument, picking, technique, tuning, grid and reve
   assert.ok(songs.some((s) => s.fx.dlyOn), 'the delay');
 });
 
-test('demos with position shifts make the fingers heard', () => {
-  let squeaks = 0;
+test('finger noise comes with hand moves, section starts and pauses, not in running passages', () => {
+  let total = 0, placed = 0, demos = 0;
   for (const song of songs) {
-    const perf = S.newPerformer(7);
-    squeaks += S.songEvents(song, 0, S.totalSteps(song), 0, perf.rnd, perf).filter((e) => e.type === 'q' && e.amt > 0).length;
+    const bar = S.stepsPerBar(song), stepDur = 60 / song.bpm / song.spb;
+    let n = 0;
+    for (let r = 0; r < 20; r++) {
+      const perf = S.newPerformer(r);
+      for (let i = 0; i < S.totalSteps(song); i++) for (const e of S.stepEvents(song, i, i * stepDur, perf.rnd, perf)) {
+        if (e.type !== 'q' || !(e.amt > 0)) continue;
+        n++;
+        if (i % bar < song.spb || perf.hand[i].gap >= song.spb * stepDur) placed++;
+      }
+    }
+    total += n;
+    if (n) demos++;
   }
-  assert.ok(squeaks >= 40, `${squeaks} squeaks in all demos`);
+  assert.ok(demos >= 10, `finger noise in ${demos} demos`);
+  assert.ok(placed / total >= 0.6, `${placed} of ${total} squeaks at a bar start or after a pause`);
 });

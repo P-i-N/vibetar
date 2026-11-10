@@ -92,30 +92,64 @@ function squeaks(song, step, plays = 300) {
   return { share: n / plays, evs };
 }
 
-test('the hand moving to another string squeaks on the wound string it leaves', () => {
+test('the hand moving to another string lifts the note it held and may squeak on that string', () => {
   const song = blank();
   song.inst.fingerNoise = 1;
   S.setCell(song, 0, 1, { f: 3, t: '' });   // A string, 3rd fret
   S.setCell(song, 4, 4, { f: 10, t: '' });  // then up the neck on the B string
   const { share, evs } = squeaks(song, 4);
   assert.ok(share > 0.5, `${(100 * share).toFixed(0)} % of plays squeak`);
-  assert.ok(evs.every((e) => e.s === 1 && e.nl), 'the finger slides along the A string; the B string note is not lifted');
+  assert.ok(evs.every((e) => e.s === 1 && !e.nl), 'the finger slides along the A string, which stops sounding');
   const n = S.stepEvents(song, 4, 10, Math.random).find((e) => e.type === 'n');
   assert.ok(evs.every((e) => e.t + e.dur <= n.t + 1e-9 && e.t > n.t - 0.4));
 });
 
-test('changing chords lifts fingers off the wound strings, sometimes audibly', () => {
+test('changing chords in one position is quiet in a running passage, may squeak after a long chord', () => {
   const song = blank();
   song.inst.fingerNoise = 1;
-  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 0, s, { f, t: '' })); // C
-  [3, 2, 0, 0, 0, 3].forEach((f, s) => S.setCell(song, 8, s, { f, t: '' }));            // G
-  const { share, evs } = squeaks(song, 8);
-  assert.ok(share > 0.1 && share < 0.6, `${(100 * share).toFixed(0)} % of chord changes squeak`);
-  assert.ok(evs.every((e) => (e.s === 1 || e.s === 2) && e.nl && e.dur <= 0.06 && e.amt <= 0.5), JSON.stringify(evs[0]));
-  // the same chord again moves no finger
-  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 16, s, { f, t: '' }));
-  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 24, s, { f, t: '' }));
-  assert.equal(squeaks(song, 24).share, 0);
+  const C = [-1, 3, 2, 0, 1, 0], G = [3, 2, 0, 0, 0, 3];
+  const chord = (st, sh) => sh.forEach((f, s) => f >= 0 && S.setCell(song, st, s, { f, t: '' }));
+  chord(0, C); chord(2, G); chord(4, C); chord(6, G);   // eighth-note changes
+  for (const st of [2, 4, 6]) assert.equal(squeaks(song, st).share, 0, `step ${st}`);
+  chord(16, C); chord(32, G);                           // a C held for a bar
+  const { share, evs } = squeaks(song, 32);
+  assert.ok(share > 0.1 && share < 0.6, `${(100 * share).toFixed(0)} % squeak after a long chord`);
+  assert.ok(evs.every((e) => e.nl && e.dur <= 0.08 && e.amt <= 0.5 && e.s < 4), JSON.stringify(evs[0]));
+});
+
+test('a melody over a bass in one position never squeaks', () => {
+  const song = blank();
+  song.inst.fingerNoise = 1;
+  // bass on beat 1, melody on the trebles, all in first position
+  for (let bar = 0; bar < 4; bar++) {
+    const o = bar * 16;
+    S.setCell(song, o, 1, { f: 3, t: '' });
+    [[0, 5, 1], [4, 4, 3], [8, 4, 1], [12, 3, 2]].forEach(([st, s, f]) => S.setCell(song, o + st, s, { f, t: '' }));
+  }
+  for (let st = 1; st < 64; st++) if (song.cols[st]) assert.equal(squeaks(song, st, 100).share, 0, `step ${st}`);
+});
+
+test('the notes of a barre chord are stopped by the flat finger', () => {
+  const song = blank();
+  [1, 3, 3, 2, 1, 1].forEach((f, s) => S.setCell(song, 0, s, { f, t: '' })); // F
+  [-1, 3, 2, 0, 1, 0].forEach((f, s) => f >= 0 && S.setCell(song, 8, s, { f, t: '' })); // C
+  const br = (st) => S.stepEvents(song, st, 10, Math.random).filter((e) => e.type === 'n' && e.br).map((e) => e.s).sort();
+  assert.deepEqual(br(0), [0, 4, 5]);
+  assert.deepEqual(br(8), []);
+});
+
+test('in a single-note line each note mutes the string sounding before it, just after it', () => {
+  const song = blank();
+  const line = [[3, 0], [3, 2], [4, 0], [4, 1], [4, 3], [5, 0], [4, 3], [4, 1], [4, 0], [3, 2]];
+  line.forEach(([s, f], i) => S.setCell(song, i * 2, s, { f, t: '' }));
+  const evs = S.songEvents(song, 0, 20, 0, Math.random);
+  const mutes = evs.filter((e) => e.type === 'o');
+  // a mute for every change of string
+  assert.equal(mutes.length, 4);
+  for (const m of mutes) {
+    const n = evs.find((e) => e.type === 'n' && e.t <= m.t + 1e-9 && m.t - e.t < 0.05 && e.s !== m.s);
+    assert.ok(n, `mute of string ${m.s} at ${m.t.toFixed(3)} s follows a note on another string`);
+  }
 });
 
 test('fast passages are not cut short by the travelling finger', () => {

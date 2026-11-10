@@ -90,11 +90,15 @@ function restore(from, to) {
   if (!from.length) return;
   to.push(snapshot());
   Object.assign(song, JSON.parse(from.pop()));
+  replan();
   clampCursor();
   syncSongControls();
   renderSheet();
   scheduleSave();
 }
+
+// the fretting hand plans the song once per performance; an edit while playing makes it plan again
+function replan() { if (player.perf) player.perf.hand = null; }
 
 // ---- sheet rendering ---------------------------------------------------------
 
@@ -237,6 +241,7 @@ function updateStatus() {
 // ---- editing -----------------------------------------------------------------
 
 function changed(a, b) {
+  replan();
   if (a == null) renderSheet(); else paintSteps(a, b);
   updateStatus();
   scheduleSave();
