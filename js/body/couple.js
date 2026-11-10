@@ -10,7 +10,7 @@
 //   c_a          how much each coordinate squeezes air mode a
 
 import { symEig } from './eigen.js';
-import { plateModes } from './plate.js';
+import { plateModes, stiffness } from './plate.js';
 import { cavityModes } from './cavity.js';
 import { outlineGrid, AIR } from './instruments.js';
 import { nodeAt } from './grid.js';
@@ -119,4 +119,35 @@ export function coupleBody(inst, { h = 0.008, nTop = 150, nBack = 80, nAir = 30,
   for (let s = 0; s < 6; s++) body.z[s] = 2 * inst.strings.scale * 440 * Math.pow(2, (OPEN_MIDI[s] - 69) / 12) * inst.strings.mu[s];
   body.parts = { nTop, nBack, nAir, topF: top.f, backF: back.f, airF: air.f };
   return body;
+}
+
+// Velocity at string i's saddle point per unit force at string j's, at
+// frequency f (Hz):  Σ_k c_ik c_jk · jω / (ω_k²(1 + jη_k) − ω²).
+// rockI / rockJ select the bridge-rocking coupling (force along the top).
+export function bridgeAdmittance(body, i, j, f, { rockI = false, rockJ = false } = {}) {
+  const w = 2 * Math.PI * f, K = body.K;
+  const ci = rockI ? body.rock : body.phi, cj = rockJ ? body.rock : body.phi;
+  let re = 0, im = 0;
+  for (let k = 0; k < K; k++) {
+    const wk2 = (2 * Math.PI * body.f[k]) ** 2;
+    const dr = wk2 - w * w, di = body.eta[k] * wk2;
+    const g = (ci[i * K + k] * cj[j * K + k] * w) / (dr * dr + di * di);
+    re += g * di; im += g * dr;
+  }
+  return { re, im };
+}
+
+// What the bridge looks like to a string above the modelled resonances: the
+// point conductance of an endless plate with the top's stiffness and weight at
+// the bridge,  1 / (8 √(D m)).
+export function plateConductance(inst) {
+  const D = stiffness(inst.top.wood, inst.top.thickness);
+  let m = inst.top.wood.rho * inst.top.thickness;
+  for (const p of inst.top.patches || []) {
+    if (0 < p.x0 || 0 > p.x1 || inst.saddle.y < p.y0 || inst.saddle.y > p.y1) continue;
+    const d = stiffness(p.wood, p.thickness);
+    D.Dx += d.Dx; D.Dy += d.Dy;
+    m += p.wood.rho * p.thickness;
+  }
+  return 1 / (8 * Math.sqrt(Math.sqrt(D.Dx * D.Dy) * m));
 }

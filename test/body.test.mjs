@@ -102,3 +102,45 @@ test('the coupled body builds within its share of the time budget', () => {
   coupleBody(INSTRUMENTS.nylon);
   assert.ok(performance.now() - t0 < 6000);
 });
+
+// ---- the bridge as the strings see it ------------------------------------------
+import { bridgeAdmittance, plateConductance } from '../js/body/couple.js';
+
+const logFreqs = (lo, hi, n) => Array.from({ length: n }, (_, i) => lo * Math.pow(hi / lo, i / (n - 1)));
+
+test('the bridge never supplies energy', () => {
+  for (const name of ['steel', 'nylon', 'twelve']) {
+    const b = body(name);
+    for (const f of logFreqs(40, 5000, 400)) for (let i = 0; i < 6; i++) {
+      assert.ok(bridgeAdmittance(b, i, i, f).re >= 0, `${name} string ${i} at ${f.toFixed(0)} Hz`);
+      assert.ok(bridgeAdmittance(b, i, i, f, { rockI: true, rockJ: true }).re >= 0);
+    }
+  }
+});
+
+test('reciprocity: string A moves B as much as B moves A', () => {
+  const b = body('steel');
+  for (const f of [82, 196, 440, 1234, 3000]) {
+    const ab = bridgeAdmittance(b, 0, 5, f), ba = bridgeAdmittance(b, 5, 0, f);
+    assert.ok(Math.abs(ab.re - ba.re) <= 1e-12 * Math.abs(ab.re) + 1e-18 && Math.abs(ab.im - ba.im) <= 1e-12 * Math.abs(ab.im) + 1e-18);
+    const vr = bridgeAdmittance(b, 1, 4, f, { rockJ: true }), rv = bridgeAdmittance(b, 4, 1, f, { rockI: true });
+    assert.ok(Math.abs(vr.re - rv.re) <= 1e-12 * Math.abs(vr.re) + 1e-18);
+  }
+});
+
+test('admittance magnitudes are guitar-like', () => {
+  const b = body('steel');
+  const mag = (i, f, o) => { const y = bridgeAdmittance(b, i, i, f, o); return Math.hypot(y.re, y.im); };
+  const top = b.f[strongestBridgeMode(b, 150, 260)];
+  assert.ok(mag(2, top) > 0.02 && mag(2, top) < 0.3, `|Y| at the top resonance ${mag(2, top)} s/kg`);
+  const fs = logFreqs(300, 3000, 120);
+  const mean = (o) => Math.exp(fs.reduce((a, f) => a + Math.log(mag(2, f, o)), 0) / fs.length);
+  assert.ok(mean() > 0.003 && mean() < 0.03, `mean |Y| 300 Hz - 3 kHz ${mean()} s/kg`);
+  assert.ok(20 * Math.log10(mean() / mean({ rockI: true, rockJ: true })) > 6, 'rocking is at least 6 dB weaker than vertical motion');
+});
+
+test('above the modelled modes the bridge looks like a plate of the top\'s stiffness', () => {
+  const g = plateConductance(INSTRUMENTS.steel);
+  assert.ok(g > 0.002 && g < 0.03, `conductance ${g} s/kg`);
+  assert.ok(plateConductance(INSTRUMENTS.nylon) > g, 'the lighter classical top moves more');
+});
