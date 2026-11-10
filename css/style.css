@@ -188,15 +188,16 @@ kbd { font: 11.5px var(--mono); background: var(--bg); border: 1px solid var(--l
   :root { --cw: 20px; }
   #meter, .spacer { display: none; }
   .transport { display: contents; }
-  .title { flex: 1 1 50%; max-width: none; }
-  .menuwrap { order: 1; }
-  .transport > *, #share { order: 2; }
+  .title { flex: 1 1 100px; }
   .btn { padding: 6px 9px; }
   .btn.primary { min-width: 72px; }
   .field input { width: 38px; }
   #share { margin-left: auto; }
 }
 @media (max-width: 560px) {
+  .title { flex: 1 1 50%; max-width: none; }
+  .menuwrap { order: 1; }
+  .transport > *, #share { order: 2; }
   .pad { gap: 5px 6px; padding-left: 6px; padding-right: 6px; }
   .padgroup { gap: 3px; flex: 1 1 100%; min-width: 0; }
   .padgroup button { flex: 1 1 0; min-width: 0; padding: 0; }
