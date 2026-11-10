@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as S from '../js/song.js';
+import { DEMOS } from '../js/demos.js';
 import { fft } from '../js/ir.js';
 import { FS, db, renderMix } from './util.mjs';
 
@@ -30,7 +31,7 @@ const REFERENCE = {
 };
 
 test('demo songs keep their level and balance', () => {
-  for (const d of S.DEMOS) {
+  for (const d of DEMOS) {
     const song = d.make(), m = stats(renderMix(song)), c = REFERENCE[song.title];
     // at the default master volume (0.8) only the tips of the loudest attacks reach into the soft
     // clipper's knee (it is linear to 0.62 and rounds off towards 0.98)

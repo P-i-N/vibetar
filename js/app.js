@@ -3,6 +3,7 @@
 import { AudioEngine, renderSong, wavBlob } from './audio.js';
 import * as S from './song.js';
 import { parseMidi, midiToSong } from './midi.js';
+import { DEMOS } from './demos.js';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -742,7 +743,7 @@ function bindInput() {
     m.hidden = !m.hidden;
     $('menuBtn').setAttribute('aria-expanded', !m.hidden);
   });
-  S.DEMOS.forEach((d, i) => {
+  DEMOS.forEach((d, i) => {
     const b = el('button', '', d.name);
     b.dataset.demo = i;
     $('demoList').append(b);
@@ -751,7 +752,7 @@ function bindInput() {
     const b = e.target.closest('button');
     if (!b) return;
     closeMenu();
-    if (b.dataset.demo != null) { await save(); setSong(S.DEMOS[+b.dataset.demo].make()); await save(true); }
+    if (b.dataset.demo != null) { await save(); setSong(DEMOS[+b.dataset.demo].make()); await save(true); }
     else if (b.dataset.act === 'new') { await save(); setSong(S.newSong()); await save(true); toast('New song — the browser Back button brings the old one back'); }
     else if (b.dataset.act === 'help') $('help').showModal();
     else if (b.dataset.act === 'wav') exportWav();
@@ -827,7 +828,7 @@ async function boot() {
       if (saved) { setSong(await S.decodeSong(saved)); ok = true; }
     } catch (e) { /* ignore */ }
   }
-  if (!ok) setSong(S.DEMOS[0].make());
+  if (!ok) setSong(DEMOS[0].make());
   requestAnimationFrame(frame);
   // debugging / scripting hook
   window.vibetar = { audio, get song() { return song; }, S, player };
